@@ -1,0 +1,17 @@
+.git
+.github
+.gitignore
+.env
+.env.*
+!.env.example
+__pycache__
+*.py[cod]
+*.db
+*.db-journal
+.venv
+venv
+.idea
+.vscode
+*.log
+*.md
+deploy
