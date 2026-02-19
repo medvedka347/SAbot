@@ -17,16 +17,29 @@ jobs:
     - name: 🚀 Deploy to server
       run: |
         ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+          set -e
+          
           cd ~/SABot || exit 1
           
           echo "📥 Pulling latest code..."
           git pull origin main
           
+          echo "📦 Installing dependencies..."
+          source .venv/bin/activate
+          pip install -r requirements.txt --quiet
+          
           echo "🔄 Restarting bot service..."
           sudo systemctl restart sabot
+          
+          echo "⏳ Waiting for service to start..."
+          sleep 3
           
           echo "✅ Checking service status..."
           sudo systemctl status sabot --no-pager
           
           echo "🎉 Deploy completed!"
         EOF
+    
+    - name: 🔔 Notify on failure
+      if: failure()
+      run: echo "❌ Deploy failed! Check logs at https://github.com/${{ github.repository }}/actions"

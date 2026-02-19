@@ -7,45 +7,56 @@
 1. Ты делаешь `git push` в ветку `main`
 2. GitHub автоматически подключается к серверу по SSH
 3. Обновляет код (`git pull`)
-4. Перезапускает бота (`systemctl restart sabot`)
+4. Устанавливает новые зависимости (если requirements.txt изменился)
+5. Перезапускает бота (`systemctl restart sabot`)
+6. Проверяет статус сервиса
 
 ---
 
-## ⚙️ Настройка (3 шага)
+## ⚙️ Быстрая настройка (автоматический скрипт)
 
-### Шаг 1: Настройка сервера (выполнить на сервере)
+```bash
+# На сервере выполни:
+curl -sSL https://raw.githubusercontent.com/medvedka347/SAbot/main/deploy/setup-server.sh | bash
+```
 
-Подключись к серверу по SSH:
+Или вручную по шагам ниже ↓
+
+---
+
+## ⚙️ Ручная настройка
+
+### Шаг 1: Настройка сервера
+
+Подключись к серверу:
 ```bash
 ssh root@ТВОЙ_PUBLIC_IP
 ```
 
-Выполни команды:
-
+Выполни:
 ```bash
-# 1. Обновление системы
+# Обновление системы
 apt update && apt upgrade -y
 
-# 2. Установка необходимых пакетов
+# Установка пакетов
 apt install -y python3 python3-pip python3-venv git
 
-# 3. Создание директории для бота
-mkdir -p /root/SABot
-cd /root/SABot
+# Создание директории
+mkdir -p /root/SABot && cd /root/SABot
 
-# 4. Клонирование репозитория
+# Клонирование
 git clone https://github.com/medvedka347/SAbot.git .
 
-# 5. Создание виртуального окружения
+# Создание venv
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 6. Создание .env файла
+# Создание .env
 nano .env
 ```
 
-Вставь в .env:
+**Содержимое .env:**
 ```env
 BOT_TOKEN=your_bot_token_here
 DB_NAME=user_roles.db
@@ -55,90 +66,180 @@ INITIAL_ADMIN_ID=your_telegram_id_here
 Сохрани: `Ctrl+O`, `Enter`, `Ctrl+X`
 
 ```bash
-# 7. Копирование systemd сервиса
+# Установка systemd сервиса
 cp deploy/sabot.service /etc/systemd/system/
-
-# 8. Запуск и включение автозапуска
 systemctl daemon-reload
 systemctl enable sabot
 systemctl start sabot
-
-# 9. Проверка статуса
 systemctl status sabot
 ```
 
 ---
 
-### Шаг 2: Настройка SSH ключа для GitHub
-
-На сервере сгенерируй ключ:
+### Шаг 2: Firewall (если включён)
 
 ```bash
-ssh-keygen -t ed25519 -C "github-actions" -f /root/.ssh/github_actions
+# Разрешить SSH для GitHub Actions
+ufw allow 22/tcp
+# или
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
 ```
-
-(нажми Enter 3 раза, без пароля)
-
-Покажи приватный ключ:
-```bash
-cat /root/.ssh/github_actions
-```
-
-**Скопируй вывод целиком** (начинается с `-----BEGIN OPENSSH PRIVATE KEY-----`)
 
 ---
 
-### Шаг 3: Добавление секретов в GitHub
+### Шаг 3: SSH ключ для GitHub
 
-1. Открой https://github.com/medvedka347/SAbot
-2. Перейди в **Settings** → **Secrets and variables** → **Actions**
-3. Нажми **New repository secret**
-4. Добавь 3 секрета:
+На сервере:
+```bash
+# Создать ключ
+ssh-keygen -t ed25519 -C "github-actions" -f /root/.ssh/github_actions -N ""
+
+# Добавить в authorized_keys
+cat /root/.ssh/github_actions.pub >> /root/.ssh/authorized_keys
+
+# Показать приватный ключ (скопируй ВЕСЬ вывод)
+cat /root/.ssh/github_actions
+```
+
+---
+
+### Шаг 4: GitHub Secrets
+
+Открой: `https://github.com/medvedka347/SAbot/settings/secrets/actions`
+
+Добавь 3 секрета:
 
 | Name | Value |
 |------|-------|
-| `SSH_PRIVATE_KEY` | Приватный ключ (скопированный на шаге 2) |
-| `SSH_HOST` | Твой Public IP адрес |
+| `SSH_PRIVATE_KEY` | Приватный ключ (весь текст из `cat /root/.ssh/github_actions`) |
+| `SSH_HOST` | Твой Public IP |
 | `SSH_USER` | `root` |
 
 ---
 
-## 🎉 Готово!
-
-Теперь при каждом `git push` в ветку `main`:
+## 🎉 Тестирование
 
 ```bash
+# Локально сделай изменение и push
 git add .
-git commit -m "Обновление"
+git commit -m "Test deploy"
 git push origin main
 ```
 
-GitHub автоматически обновит код на сервере и перезапустит бота!
-
-Проверить можно тут: https://github.com/medvedka347/SAbot/actions
+Смотри статус деплоя: https://github.com/medvedka347/SAbot/actions
 
 ---
 
-## 🐛 Полезные команды на сервере
+## 🐛 Troubleshooting
 
+### Проблема: "Permission denied (publickey)"
+
+**Решение:**
 ```bash
-# Просмотр логов бота
-journalctl -u sabot -f
+# На сервере проверь права
+chmod 700 /root/.ssh
+chmod 600 /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/github_actions
 
-# Перезапуск бота вручную
-systemctl restart sabot
+# Проверь что ключ добавлен
+grep "github-actions" /root/.ssh/authorized_keys
+```
 
-# Остановка бота
-systemctl stop sabot
+### Проблема: "Failed to restart sabot.service"
 
-# Проверка статуса
+**Решение:**
+```bash
+# Проверь статус
 systemctl status sabot
+
+# Проверь логи
+journalctl -u sabot -n 50
+
+# Проверь .env файл
+ls -la /root/SABot/.env
+```
+
+### Проблема: Бот не запускается после деплоя
+
+**Решение:**
+```bash
+# Проверь зависимости
+source /root/SABot/.venv/bin/activate
+pip install -r /root/SABot/requirements.txt
+
+# Перезапусти вручную
+systemctl restart sabot
+journalctl -u sabot -f
+```
+
+### Проблема: "Could not resolve host github.com"
+
+**Решение:**
+```bash
+# Проверь DNS
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+
+# Или проверь интернет
+ping -c 3 github.com
 ```
 
 ---
 
-## ⚠️ Важно
+## 💾 Backup базы данных
 
-1. **Никогда не комить `.env` файл** — он в `.gitignore` и должен оставаться только на сервере
-2. **База данных** (`user_roles.db`) тоже не в git — она создаётся на сервере автоматически
-3. Если CI/CD упал — проверь логи: https://github.com/medvedka347/SAbot/actions
+Перед важными изменениями:
+
+```bash
+# Ручной backup
+cp /root/SABot/user_roles.db /root/SABot/user_roles.db.backup.$(date +%Y%m%d)
+
+# Автоматический backup (добавь в crontab)
+0 3 * * * cp /root/SABot/user_roles.db /root/backups/sabot_$(date +\%Y\%m\%d).db
+```
+
+---
+
+## 📊 Полезные команды
+
+```bash
+# Логи в реальном времени
+journalctl -u sabot -f
+
+# Последние 100 строк логов
+journalctl -u sabot -n 100 --no-pager
+
+# Логи за последний час
+journalctl -u sabot --since "1 hour ago"
+
+# Перезапуск
+systemctl restart sabot
+
+# Полная остановка
+systemctl stop sabot
+
+# Проверка что бот работает
+systemctl is-active sabot
+ps aux | grep SABot
+```
+
+---
+
+## 🔒 Безопасность
+
+1. **Никогда не комить `.env`** — он в `.gitignore`
+2. **Никогда не комить `user_roles.db`** — база данных на сервере
+3. **Ограничь SSH доступ** по IP если возможно
+4. **Регулярно обновляй систему:** `apt update && apt upgrade`
+
+---
+
+## 🔄 Обновление вручную (если CI/CD не работает)
+
+```bash
+ssh root@ТВОЙ_IP
+cd /root/SABot
+git pull origin main
+source .venv/bin/activate
+pip install -r requirements.txt
+systemctl restart sabot
+```

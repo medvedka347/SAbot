@@ -6,11 +6,17 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/SABot
+EnvironmentFile=/root/SABot/.env
 ExecStart=/root/SABot/.venv/bin/python /root/SABot/main.py
 Restart=always
 RestartSec=10
+StartLimitIntervalSec=60
+StartLimitBurst=3
+KillMode=process
+TimeoutSec=30
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=sabot
 
 [Install]
 WantedBy=multi-user.target
