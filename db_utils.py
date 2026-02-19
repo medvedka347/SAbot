@@ -1,7 +1,7 @@
 import sqlite3
 import logging
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram.types import Message
 
 from config import DB_NAME, STAGES
@@ -505,12 +505,11 @@ def apply_ban(user_id: int = None, username: str = None) -> dict:
     # Вычисляем время бана
     now = datetime.now()
     if ban_level == 1:
-        banned_until = now.replace(minute=now.minute + 5)
+        banned_until = now + timedelta(minutes=5)
     elif ban_level == 2:
-        banned_until = now.replace(minute=now.minute + 10)
+        banned_until = now + timedelta(minutes=10)
     else:  # ban_level == 3
-        # Бан на месяц
-        banned_until = now.replace(month=now.month + 1) if now.month < 12 else now.replace(year=now.year + 1, month=1)
+        banned_until = now + timedelta(days=30)
     
     # Сохраняем бан
     db.execute(
@@ -554,6 +553,18 @@ def unban_user(user_id: int = None, username: str = None) -> bool:
         (user_id, username)
     )
     return deleted > 0
+
+
+def get_active_bans() -> list[dict]:
+    """Получить список активных банов."""
+    rows = db.fetchall(
+        "SELECT id, user_id, username, ban_level, banned_until FROM bans "
+        "WHERE banned_until > datetime('now') ORDER BY banned_until DESC"
+    )
+    return [
+        {"id": r[0], "user_id": r[1], "username": r[2], "ban_level": r[3], "banned_until": r[4]}
+        for r in rows
+    ]
 
 
 # ==================== ФИЛЬТРЫ ====================
@@ -684,6 +695,20 @@ def get_materials_stats() -> dict:
     stats = {stage: 0 for stage in STAGES}
     stats.update({r[0]: r[1] for r in rows})
     return stats
+
+
+def search_materials(query: str) -> list[dict]:
+    """Поиск материалов по названию или описанию (case-insensitive)."""
+    like = f"%{query.strip()}%"
+    rows = db.fetchall(
+        "SELECT id, stage, title, link, description FROM materials "
+        "WHERE title LIKE ? OR description LIKE ? ORDER BY stage, created_at",
+        (like, like)
+    )
+    return [
+        {"id": r[0], "stage": r[1], "title": r[2], "link": r[3], "description": r[4]}
+        for r in rows
+    ]
 
 
 # Created by Техножрец R1sl1n

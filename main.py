@@ -1,12 +1,12 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 
 from config import BOT_TOKEN, DB_NAME, ROLE_ADMIN, ROLE_MENTOR
 from db_utils import init_db, get_user_role, setup_initial_users, get_ban_status, record_failed_attempt, clear_failed_attempts, cleanup_expired_bans
-from admin_module import register_handlers, mentor_kb, admin_kb, user_kb, mock_kb
+from admin_module import register_handlers, mentor_kb, admin_kb, user_kb, mock_kb, search_handler
 
 logging.basicConfig(level=logging.INFO)
 
@@ -137,6 +137,48 @@ async def mock_select_handler(message: Message):
         await message.answer("Главное меню:", reply_markup=kb)
 
 
+async def help_handler(message: Message):
+    """Обработчик /help — список доступных функций по роли."""
+    user_id = message.from_user.id
+    username = message.from_user.username
+    role = get_user_role(user_id=user_id, username=username)
+
+    common = (
+        "📚 *Материалы* — учебные материалы по разделам\n"
+        "📅 *События комьюнити* — предстоящие вебинары и митапы\n"
+        "⏱️ *Записаться на мок* — запись на пробное собеседование\n"
+        "🤝 *Buddy* — система взаимопомощи\n"
+        "🔍 `/search <запрос>` — поиск по материалам"
+    )
+
+    if role == ROLE_ADMIN:
+        extra = (
+            "\n\n👑 *Администратор:*\n"
+            "📦 Управление материалами (CRUD)\n"
+            "👥 Управление ролями пользователей\n"
+            "📋 Управление событиями\n"
+            "🚫 Управление банами — просмотр и снятие банов"
+        )
+    elif role == ROLE_MENTOR:
+        extra = "\n\n🎓 *Ментор:*\n⚙️ Панель ментора"
+    elif role:
+        extra = ""
+    else:
+        extra = "\n\n❌ У вас нет доступа. Обратитесь к администратору."
+
+    await message.answer(
+        f"ℹ️ *Доступные функции:*\n\n{common}{extra}",
+        parse_mode="Markdown"
+    )
+
+
+async def periodic_cleanup():
+    """Периодическая очистка истёкших банов каждый час."""
+    while True:
+        await asyncio.sleep(3600)
+        cleanup_expired_bans()
+
+
 async def main():
     init_db(DB_NAME)
     setup_initial_users(DB_NAME)
@@ -145,14 +187,24 @@ async def main():
     dp = Dispatcher()
 
     dp.message.register(start_handler, CommandStart())
+    dp.message.register(help_handler, Command("help"))
+    dp.message.register(search_handler, Command("search"))
     dp.message.register(booking_handler, F.text.in_(["⏱️ Записаться на мок", "Записаться на мок"]))
     dp.message.register(mock_select_handler, F.text.in_(["👤 Влад", "👤 Регина", "👤 Руслан", "👤 Иван", "🔙 Назад"]))
     
     register_handlers(dp)
 
     await bot.delete_webhook(drop_pending_updates=True)
+    cleanup_task = asyncio.create_task(periodic_cleanup())
     logging.info("Бот запущен")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
 
 
 if __name__ == "__main__":
