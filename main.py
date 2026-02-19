@@ -109,7 +109,15 @@ async def mock_select_handler(message: Message):
             parse_mode="Markdown",
             reply_markup=user_kb
         )
-    elif mentor in ["Влад", "Регина", "Иван"]:
+    elif mentor == "Регина":
+        await message.answer(
+            f"👤 *Регина*\n\n"
+            f"[Записаться на мок](https://cal.com/ocpocmak/mock)\n\n"
+            f"Нажмите на ссылку для выбора удобного времени.",
+            parse_mode="Markdown",
+            reply_markup=user_kb
+        )
+    elif mentor in ["Влад", "Иван"]:
         await message.answer(
             f"👤 *{mentor}*\n\n"
             f"_Запись пока недоступна_\n\n"
