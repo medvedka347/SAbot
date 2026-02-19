@@ -81,10 +81,10 @@ mock_kb = ReplyKeyboardMarkup(
 )
 
 # Главные меню
-user_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок"])
-mentor_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "⚙️ Админка"])
+user_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"])
+mentor_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "⚙️ Админка", "🤝 Buddy"])
 admin_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок",
-               "📦 Управление материалами", "👥 Управление ролями", "📋 Управление событиями", "🔙 Назад"])
+               "📦 Управление материалами", "👥 Управление ролями", "📋 Управление событиями", "🤝 Buddy", "🔙 Назад"])
 materials_menu_kb = kb(["📖 Просмотреть", "➕ Добавить", "✏️ Редактировать", "🗑️ Удалить", "📊 Статистика"], "🔙 Назад")
 roles_menu_kb = kb(["📋 Список пользователей", "➕ Назначить роль", "🗑️ Удалить пользователя"], "🔙 Назад")
 events_menu_kb = kb(["📖 Просмотреть", "➕ Добавить", "✏️ Редактировать", "🗑️ Удалить"], "🔙 Назад")
@@ -862,6 +862,19 @@ async def public_events_show(message: Message):
     await message.answer(text, parse_mode="Markdown")
 
 
+async def buddy_handler(message: Message):
+    """Обработчик раздела Buddy."""
+    # Проверяем rate limit
+    if not check_rate_limit(message.from_user.id):
+        return
+    
+    await message.answer(
+        "🤝 *Buddy*\n\n"
+        "тут будет анонс системы бадди",
+        parse_mode="Markdown"
+    )
+
+
 # ==================== РЕГИСТРАЦИЯ ====================
 
 def register_handlers(dp):
@@ -874,6 +887,7 @@ def register_handlers(dp):
     dp.message.register(public_materials_select, F.text.in_(["📚 Материалы", "Материалы"]), IsAuthorizedUser())
     dp.message.register(handle_stage_selection, Form.selecting_stage, IsAuthorizedUser())
     dp.message.register(public_events_show, F.text.in_(["📅 События комьюнити", "События комьюнити"]), IsAuthorizedUser())
+    dp.message.register(buddy_handler, F.text.in_(["🤝 Buddy", "Buddy"]), IsAuthorizedUser())
     
     # Материалы
     dp.message.register(materials_menu, F.text == "📦 Управление материалами", IsAdmin())
