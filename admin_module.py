@@ -14,7 +14,8 @@ from db_utils import (
     add_or_update_user, set_users_batch, delete_user, get_all_users,
     add_event, get_events, update_event, delete_event,
     add_material, get_materials, get_material, update_material, delete_material, get_materials_stats,
-    normalize_username, validate_user_id, cleanup_expired_bans
+    normalize_username, validate_user_id, cleanup_expired_bans,
+    search_materials, get_active_bans, unban_user, db as _db
 )
 
 
@@ -84,7 +85,8 @@ mock_kb = ReplyKeyboardMarkup(
 user_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"])
 mentor_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "⚙️ Админка", "🤝 Buddy"])
 admin_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок",
-               "📦 Управление материалами", "👥 Управление ролями", "📋 Управление событиями", "🤝 Buddy", "🔙 Назад"])
+               "📦 Управление материалами", "👥 Управление ролями", "📋 Управление событиями",
+               "🚫 Управление банами", "🤝 Buddy", "🔙 Назад"])
 materials_menu_kb = kb(["📖 Просмотреть", "➕ Добавить", "✏️ Редактировать", "🗑️ Удалить", "📊 Статистика"], "🔙 Назад")
 roles_menu_kb = kb(["📋 Список пользователей", "➕ Назначить роль", "🗑️ Удалить пользователя"], "🔙 Назад")
 events_menu_kb = kb(["📖 Просмотреть", "➕ Добавить", "✏️ Редактировать", "🗑️ Удалить"], "🔙 Назад")
@@ -875,6 +877,89 @@ async def buddy_handler(message: Message):
     )
 
 
+# ==================== УПРАВЛЕНИЕ БАНАМИ ====================
+
+async def bans_menu(message: Message, state: FSMContext):
+    """Меню управления банами."""
+    if not check_rate_limit(message.from_user.id):
+        return
+    bans = get_active_bans()
+    if not bans:
+        await message.answer("✅ Активных банов нет.")
+        return
+
+    lines = [f"🚫 *Активные баны ({len(bans)}):*\n"]
+    for b in bans:
+        who = f"@{b['username']}" if b['username'] else f"ID:{b['user_id']}"
+        until = b['banned_until'][:16]
+        lines.append(f"• {who} | уровень {b['ban_level']} | до {until}")
+
+    kb_inline = inline_kb([
+        [InlineKeyboardButton(
+            text=f"🔓 {('@' + b['username']) if b['username'] else ('ID:' + str(b['user_id']))}",
+            callback_data=f"unban:{b['id']}"
+        )]
+        for b in bans
+    ])
+    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=kb_inline)
+
+
+async def ban_unban_callback(callback: CallbackQuery, state: FSMContext):
+    """Callback снятия бана по ID записи бана."""
+    await callback.answer()
+    try:
+        ban_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await callback.message.edit_text("❌ Некорректные данные")
+        return
+
+    # Находим бан по id и снимаем
+    row = _db.fetchone("SELECT user_id, username FROM bans WHERE id = ?", (ban_id,))
+    if not row:
+        await callback.message.edit_text("❌ Бан не найден (уже истёк?)")
+        return
+    unban_user(user_id=row[0], username=row[1])
+    who = f"@{row[1]}" if row[1] else f"ID:{row[0]}"
+    await callback.message.edit_text(f"✅ Бан снят: {who}")
+
+
+# ==================== ПОИСК МАТЕРИАЛОВ ====================
+
+async def search_handler(message: Message):
+    """Обработчик команды /search <запрос>."""
+    if not check_rate_limit(message.from_user.id):
+        return
+    # Извлекаем текст запроса после /search
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "🔍 *Поиск по материалам*\n\n"
+            "Использование: `/search <запрос>`\n"
+            "Пример: `/search REST API`",
+            parse_mode="Markdown"
+        )
+        return
+
+    query = parts[1].strip()
+    if len(query) > 100:
+        await message.answer("❌ Запрос слишком длинный (макс 100 символов)")
+        return
+
+    results = search_materials(query)
+    if not results:
+        await message.answer(f"🔍 По запросу *{query}* ничего не найдено.", parse_mode="Markdown")
+        return
+
+    lines = [f"🔍 *Результаты по запросу \"{query}\" ({len(results)}):*\n"]
+    for m in results[:20]:  # Ограничиваем вывод
+        stage_name = STAGES.get(m['stage'], m['stage'])
+        lines.append(f"• [{m['title']}]({m['link']}) _({stage_name})_")
+    if len(results) > 20:
+        lines.append(f"\n_...и ещё {len(results) - 20} результатов_")
+
+    await message.answer("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
+
+
 # ==================== РЕГИСТРАЦИЯ ====================
 
 def register_handlers(dp):
@@ -925,3 +1010,7 @@ def register_handlers(dp):
     dp.callback_query.register(role_set_callback, F.data.startswith("set_role:"), IsAdmin())
     dp.message.register(role_delete_start, F.text == "🗑️ Удалить пользователя", IsAdmin())
     dp.callback_query.register(role_delete_callback, F.data.startswith("del_user:"), IsAdmin())
+
+    # Баны
+    dp.message.register(bans_menu, F.text == "🚫 Управление банами", IsAdmin())
+    dp.callback_query.register(ban_unban_callback, F.data.startswith("unban:"), IsAdmin())
