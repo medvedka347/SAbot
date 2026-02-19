@@ -11,6 +11,7 @@
 7. [Обновление бота](#6-обновление-бота)
 8. [Мониторинг и логи](#7-мониторинг-и-логи)
 9. [Устранение неполадок](#8-устранение-неполадок)
+10. [Деплой через Docker](#9-деплой-через-docker)
 
 ---
 
@@ -294,3 +295,49 @@ chown -R sabot:sabot /opt/SABot
 ```
 
 При этом потребуется обновить пути в `sabot.service` и `setup-server.sh`.
+
+---
+
+## 9. Деплой через Docker
+
+Docker позволяет запустить бота в изолированном контейнере без установки Python и зависимостей на хост.
+
+### Требования
+
+- Docker и Docker Compose установлены на сервере
+
+### Быстрый старт
+
+```bash
+# 1. Клонирование репозитория
+git clone https://github.com/medvedka347/SAbot.git /root/SABot
+cd /root/SABot
+
+# 2. Создание .env файла
+cp .env.example .env
+nano .env
+# Заполните BOT_TOKEN и INITIAL_ADMIN_ID
+
+# 3. Запуск
+docker compose up -d
+```
+
+### Управление контейнером
+
+```bash
+# Просмотр логов
+docker compose logs -f
+
+# Перезапуск
+docker compose restart
+
+# Остановка
+docker compose down
+
+# Пересборка после обновления кода
+docker compose up -d --build
+```
+
+### Данные
+
+База данных SQLite хранится в Docker-томе `bot-data`, поэтому данные сохраняются между перезапусками контейнера.
