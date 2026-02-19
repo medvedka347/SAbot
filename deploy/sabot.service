@@ -6,10 +6,11 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/SABot
-Environment=PATH=/root/SABot/.venv/bin
 ExecStart=/root/SABot/.venv/bin/python /root/SABot/main.py
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
