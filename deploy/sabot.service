@@ -1,0 +1,15 @@
+[Unit]
+Description=SABot Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/SABot
+Environment=PATH=/root/SABot/.venv/bin
+ExecStart=/root/SABot/.venv/bin/python /root/SABot/main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
