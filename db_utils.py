@@ -684,3 +684,6 @@ def get_materials_stats() -> dict:
     stats = {stage: 0 for stage in STAGES}
     stats.update({r[0]: r[1] for r in rows})
     return stats
+
+
+# Created by Техножрец R1sl1n
