@@ -20,7 +20,7 @@ from db_utils import (
 
 
 # ==================== RATE LIMITING ====================
-# ==================== RATE LIMITING ====================
+
 # In-memory хранилище для rate limiting: {user_id: timestamp}
 _rate_limits = {}
 RATE_LIMIT_SECONDS = 1  # Минимальный интервал между командами
