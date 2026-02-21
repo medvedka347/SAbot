@@ -1,0 +1,13 @@
+services:
+  bot:
+    build: .
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - bot-data:/app/data
+    environment:
+      - DB_NAME=data/user_roles.db
+
+volumes:
+  bot-data:
