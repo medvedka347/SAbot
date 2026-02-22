@@ -6,7 +6,7 @@ from aiogram.types import Message
 
 from config import BOT_TOKEN, DB_NAME, ROLE_ADMIN, ROLE_MENTOR
 from db_utils import init_db, get_user_role, setup_initial_users, get_ban_status, record_failed_attempt, clear_failed_attempts, cleanup_expired_bans
-from admin_module import register_handlers, mentor_kb, admin_kb, user_kb, mock_kb, search_handler
+from admin_module import register_handlers, mentor_kb, admin_kb, user_kb, mock_kb, search_handler, IsAuthorizedUser, check_rate_limit
 
 logging.basicConfig(level=logging.INFO)
 
@@ -79,6 +79,10 @@ async def start_handler(message: Message):
 
 async def booking_handler(message: Message):
     """Обработчик записи на мок."""
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        return
     # Показываем детальную инструкцию и меню выбора ментора
     await message.answer(
         "📋 *Запись на мок*\n\n"
@@ -99,6 +103,10 @@ async def booking_handler(message: Message):
 
 async def mock_select_handler(message: Message):
     """Обработчик выбора ментора для мока."""
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        return
     mentor = message.text.replace("👤 ", "")
     
     if mentor == "Руслан":
@@ -125,20 +133,14 @@ async def mock_select_handler(message: Message):
             parse_mode="Markdown",
             reply_markup=mock_kb
         )
-    elif mentor == "🔙 Назад":
-        # Возвращаем в главное меню
-        role = get_user_role(user_id=message.from_user.id, username=message.from_user.username)
-        if role == ROLE_ADMIN:
-            kb = admin_kb
-        elif role == ROLE_MENTOR:
-            kb = mentor_kb
-        else:
-            kb = user_kb
-        await message.answer("Главное меню:", reply_markup=kb)
 
 
 async def help_handler(message: Message):
     """Обработчик /help — список доступных функций по роли."""
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        return
     user_id = message.from_user.id
     username = message.from_user.username
     role = get_user_role(user_id=user_id, username=username)
@@ -189,8 +191,8 @@ async def main():
     dp.message.register(start_handler, CommandStart())
     dp.message.register(help_handler, Command("help"))
     dp.message.register(search_handler, Command("search"))
-    dp.message.register(booking_handler, F.text.in_(["⏱️ Записаться на мок", "Записаться на мок"]))
-    dp.message.register(mock_select_handler, F.text.in_(["👤 Влад", "👤 Регина", "👤 Руслан", "👤 Иван", "🔙 Назад"]))
+    dp.message.register(booking_handler, F.text.in_(["⏱️ Записаться на мок", "Записаться на мок"]), IsAuthorizedUser())
+    dp.message.register(mock_select_handler, F.text.in_(["👤 Влад", "👤 Регина", "👤 Руслан", "👤 Иван"]), IsAuthorizedUser())
     
     register_handlers(dp)
 

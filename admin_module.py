@@ -25,23 +25,27 @@ from db_utils import (
 _rate_limits = {}
 RATE_LIMIT_SECONDS = 1  # Минимальный интервал между командами
 
-def check_rate_limit(user_id: int) -> bool:
-    """Проверка rate limit. Возвращает True если можно обрабатывать."""
+def check_rate_limit(user_id: int) -> tuple[bool, int]:
+    """Проверка rate limit. 
+    Returns: (можно_обрабатывать, секунд_до_следующего_запроса)
+    """
     from time import time
     now = time()
     last_request = _rate_limits.get(user_id, 0)
     
     if now - last_request < RATE_LIMIT_SECONDS:
-        return False  # Слишком часто
+        wait = int(RATE_LIMIT_SECONDS - (now - last_request))
+        return False, wait  # Слишком часто
     
     _rate_limits[user_id] = now
-    return True
+    return True, 0
 
 
 # ==================== FSM ====================
 
 class Form(StatesGroup):
     menu = State()
+    menu_events = State()  # Отдельное состояние для меню событий
     selecting_stage = State()
     selecting_item = State()
     input_title = State()
@@ -269,8 +273,10 @@ def parse_users_input(text: str) -> tuple[list[dict], list[str]]:
 
 async def admin_handler(message: Message, state: FSMContext):
     # Проверяем rate limit
-    if not check_rate_limit(message.from_user.id):
-        return  # Игнорируем спам
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        return
     
     await state.clear()
     role = get_user_role(user_id=message.from_user.id)
@@ -286,7 +292,9 @@ async def admin_handler(message: Message, state: FSMContext):
 # ==================== МАТЕРИАЛЫ (CRUD) ====================
 
 async def materials_menu(message: Message, state: FSMContext):
-    if not check_rate_limit(message.from_user.id):
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     await state.set_state(Form.menu)
     await message.answer("📦 *Управление материалами*", parse_mode="Markdown", reply_markup=materials_menu_kb)
@@ -491,9 +499,11 @@ async def material_stats(message: Message, state: FSMContext):
 # ==================== СОБЫТИЯ (CRUD) ====================
 
 async def events_menu(message: Message, state: FSMContext):
-    if not check_rate_limit(message.from_user.id):
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
-    await state.set_state(Form.menu)
+    await state.set_state(Form.menu_events)
     await message.answer("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
 
 
@@ -659,7 +669,9 @@ async def event_delete_callback(callback: CallbackQuery, state: FSMContext):
 # ==================== РОЛИ (CRUD с username) ====================
 
 async def roles_menu(message: Message, state: FSMContext):
-    if not check_rate_limit(message.from_user.id):
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     await state.set_state(Form.menu)
     text = (
@@ -841,7 +853,9 @@ async def role_delete_callback(callback: CallbackQuery, state: FSMContext):
 
 async def public_materials_select(message: Message, state: FSMContext):
     # Проверяем rate limit
-    if not check_rate_limit(message.from_user.id):
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     
     await state.set_state(Form.selecting_stage)
@@ -860,7 +874,9 @@ async def public_materials_select(message: Message, state: FSMContext):
 
 async def public_events_show(message: Message):
     # Проверяем rate limit
-    if not check_rate_limit(message.from_user.id):
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     
     events = get_events(upcoming_only=True)
@@ -877,7 +893,9 @@ async def public_events_show(message: Message):
 async def buddy_handler(message: Message):
     """Обработчик раздела Buddy."""
     # Проверяем rate limit
-    if not check_rate_limit(message.from_user.id):
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     
     await message.answer(
@@ -891,7 +909,9 @@ async def buddy_handler(message: Message):
 
 async def bans_menu(message: Message, state: FSMContext):
     """Меню управления банами."""
-    if not check_rate_limit(message.from_user.id):
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     bans = get_active_bans()
     if not bans:
@@ -917,6 +937,10 @@ async def bans_menu(message: Message, state: FSMContext):
 async def ban_unban_callback(callback: CallbackQuery, state: FSMContext):
     """Callback снятия бана по ID записи бана."""
     await callback.answer()
+    ok, wait = check_rate_limit(callback.from_user.id)
+    if not ok:
+        await callback.message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        return
     try:
         ban_id = int(callback.data.split(":")[1])
     except (ValueError, IndexError):
@@ -937,7 +961,9 @@ async def ban_unban_callback(callback: CallbackQuery, state: FSMContext):
 
 async def search_handler(message: Message):
     """Обработчик команды /search <запрос>."""
-    if not check_rate_limit(message.from_user.id):
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     # Извлекаем текст запроса после /search
     parts = message.text.split(maxsplit=1)
@@ -998,18 +1024,18 @@ def register_handlers(dp):
     dp.callback_query.register(material_delete_callback, F.data.startswith("del_mat:"), IsAdmin())
     dp.message.register(material_stats, F.text == "📊 Статистика", IsAdmin())
     
-    # События
+    # События (используем Form.menu_events для разделения с материалами)
     dp.message.register(events_menu, F.text == "📋 Управление событиями", IsAdmin())
-    dp.message.register(events_show_all, F.text == "📖 Просмотреть", IsAdmin())
-    dp.message.register(event_add_start, F.text == "➕ Добавить", IsAdmin())
+    dp.message.register(events_show_all, F.text == "📖 Просмотреть", Form.menu_events, IsAdmin())
+    dp.message.register(event_add_start, F.text == "➕ Добавить", Form.menu_events, IsAdmin())
     dp.message.register(event_add_type, Form.input_type, IsAdmin())
     dp.message.register(event_add_datetime, Form.input_datetime, IsAdmin())
     dp.message.register(event_add_link, Form.input_link, IsAdmin())
     dp.message.register(event_add_announcement, Form.input_announcement, IsAdmin())
-    dp.message.register(event_edit_select, F.text == "✏️ Редактировать", IsAdmin())
+    dp.message.register(event_edit_select, F.text == "✏️ Редактировать", Form.menu_events, IsAdmin())
     dp.callback_query.register(event_edit_callback, F.data.startswith("edit_ev:"), IsAdmin())
     dp.message.register(event_edit_process, Form.editing_field, IsAdmin())
-    dp.message.register(event_delete_select, F.text == "🗑️ Удалить", IsAdmin())
+    dp.message.register(event_delete_select, F.text == "🗑️ Удалить", Form.menu_events, IsAdmin())
     dp.callback_query.register(event_delete_callback, F.data.startswith("del_ev:"), IsAdmin())
     
     # Роли (новая система)
