@@ -3,7 +3,7 @@
 ## 🤖 О проекте
 
 **SABot** — Telegram-бот для управления учебным комьюнити системного анализа.
-Реализован на Python + aiogram 3.x + SQLite.
+Реализован на Python + aiogram 3.x + aiosqlite (async SQLite).
 
 ---
 
@@ -99,10 +99,37 @@ python main.py
 
 ---
 
+## 🔧 Критические исправления стабильности (2026-02-22)
+
+### 1. 🗄️ Переход на aiosqlite (async SQLite)
+**Проблема:** Синхронные вызовы `sqlite3` из async кода блокировали event loop, вызывая "зависания" бота.  
+**Решение:** Полный переход на `aiosqlite` — все функции БД теперь async/await.  
+**Файлы:** `db_utils.py`, `admin_module.py`, `main.py`, `requirements.txt`
+
+### 2. 🛡️ Глобальный обработчик ошибок
+**Проблема:** Необработанные исключения в хендлерах могли "ломать" бота.  
+**Решение:** Добавлен `error_handler()` в `register_handlers()` — перехватывает все ошибки и уведомляет пользователя.  
+**Где:** `admin_module.py`
+
+### 3. ⏱️ Таймауты для polling
+**Проблема:** `dp.start_polling(bot)` без таймаутов мог зависать при сетевых проблемах.  
+**Решение:** Добавлены параметры `polling_timeout=30`, `timeout=30`, `error_sleep=5.0`.  
+**Где:** `main.py`
+
+### 4. 🧹 Очистка rate limits
+**Проблема:** Словарь `_rate_limits` рос бесконечно, вызывая утечку памяти.  
+**Решение:** Автоматическая очистка записей старше 1 часа при превышении 10k записей.  
+**Где:** `admin_module.py` → `check_rate_limit()`
+
+---
+
 ## 📝 Советы для AI-агентов
 
 1. **FSM:** при добавлении нового многошагового диалога — добавить `State` в `Form` (`admin_module.py`) и зарегистрировать хендлеры в `register_handlers()`.
-2. **БД:** используйте `db.execute()` / `db.fetchone()` / `db.fetchall()` — они сами управляют соединением через контекстный менеджер.
+2. **БД (aiosqlite):** ВСЕ функции БД асинхронные! Используйте `await`:
+   - `await db.execute()` / `await db.fetchone()` / `await db.fetchall()`
+   - `await get_user_role()` / `await get_all_users()` / `await add_material()` и т.д.
+3. **Фильтры:** `IsAuthorizedUser`, `IsAdmin`, `IsMentor` теперь async — используйте `async def __call__`.
 3. **Клавиатуры:** вспомогательная функция `kb(buttons, back_button)` строит `ReplyKeyboardMarkup`. Для inline — `inline_kb(buttons)`.
 4. **Роли:** всегда проверяйте роль через `get_user_role(user_id=..., username=...)` — поддерживает оба идентификатора.
 5. **Rate limit:** в начале каждого хендлера вызывайте `check_rate_limit(message.from_user.id)`.

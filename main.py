@@ -17,8 +17,8 @@ async def start_handler(message: Message):
     username = message.from_user.username
     
     # Проверяем бан (сначала чистим старые)
-    cleanup_expired_bans()
-    ban = get_ban_status(user_id=user_id, username=username)
+    await cleanup_expired_bans()
+    ban = await get_ban_status(user_id=user_id, username=username)
     if ban:
         ban_level = ban['ban_level']
         
@@ -38,11 +38,11 @@ async def start_handler(message: Message):
         return
     
     # Проверяем роль
-    role = get_user_role(user_id=user_id, username=username)
+    role = await get_user_role(user_id=user_id, username=username)
     
     if not role:
         # Записываем неудачную попытку
-        new_ban = record_failed_attempt(user_id=user_id, username=username)
+        new_ban = await record_failed_attempt(user_id=user_id, username=username)
         
         if new_ban:
             # Применен новый бан
@@ -62,7 +62,7 @@ async def start_handler(message: Message):
         return
     
     # Успешная авторизация - очищаем неудачные попытки
-    clear_failed_attempts(user_id=user_id, username=username)
+    await clear_failed_attempts(user_id=user_id, username=username)
     
     welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
     
@@ -143,7 +143,7 @@ async def help_handler(message: Message):
         return
     user_id = message.from_user.id
     username = message.from_user.username
-    role = get_user_role(user_id=user_id, username=username)
+    role = await get_user_role(user_id=user_id, username=username)
 
     common = (
         "📚 *Материалы* — учебные материалы по разделам\n"
@@ -178,12 +178,16 @@ async def periodic_cleanup():
     """Периодическая очистка истёкших банов каждый час."""
     while True:
         await asyncio.sleep(3600)
-        cleanup_expired_bans()
+        try:
+            await cleanup_expired_bans()
+        except Exception as e:
+            logging.error(f"Error in periodic_cleanup: {e}")
 
 
 async def main():
-    init_db(DB_NAME)
-    setup_initial_users(DB_NAME)
+    # Инициализация БД
+    await init_db(DB_NAME)
+    await setup_initial_users(DB_NAME)
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
@@ -199,14 +203,26 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     cleanup_task = asyncio.create_task(periodic_cleanup())
     logging.info("Бот запущен")
+    
     try:
-        await dp.start_polling(bot)
+        # Запускаем polling с таймаутами
+        await dp.start_polling(
+            bot,
+            skip_updates=True,
+            polling_timeout=30,  # Таймаут long-polling (сек)
+            timeout=30,          # Таймаут HTTP-запроса (сек)
+            relax=0.1,           # Пауза между запросами (сек)
+            error_sleep=5.0,     # Пауза при ошибке (сек)
+        )
+    except Exception as e:
+        logging.error(f"Fatal error in polling: {e}", exc_info=True)
     finally:
         cleanup_task.cancel()
         try:
             await cleanup_task
         except asyncio.CancelledError:
             pass
+        await bot.session.close()
 
 
 if __name__ == "__main__":

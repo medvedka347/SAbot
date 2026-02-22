@@ -35,9 +35,17 @@ def check_rate_limit(user_id: int) -> tuple[bool, int]:
     
     if now - last_request < RATE_LIMIT_SECONDS:
         wait = int(RATE_LIMIT_SECONDS - (now - last_request))
-        return False, wait  # Слишком часто
+        return False, wait
     
     _rate_limits[user_id] = now
+    
+    # Periodic cleanup every 1000 requests (approx)
+    if len(_rate_limits) > 10000:
+        cutoff = now - 3600  # Keep only last hour
+        old_keys = [k for k, v in _rate_limits.items() if v < cutoff]
+        for k in old_keys:
+            del _rate_limits[k]
+    
     return True, 0
 
 
@@ -110,16 +118,16 @@ def role_kb(prefix: str) -> InlineKeyboardMarkup:
 
 # ==================== ФИЛЬТРЫ ====================
 
-def check_role(message: Message, role: str) -> bool:
+async def check_role(message: Message, role: str) -> bool:
     """Проверить роль пользователя по ID или username."""
     # Сначала проверяем по ID
-    user_role = get_user_role(user_id=message.from_user.id)
+    user_role = await get_user_role(user_id=message.from_user.id)
     if user_role == role:
         return True
     
     # Если не нашли по ID, проверяем по username
     if message.from_user.username:
-        user_role = get_user_role(username=message.from_user.username)
+        user_role = await get_user_role(username=message.from_user.username)
         if user_role == role:
             return True
     
@@ -127,13 +135,13 @@ def check_role(message: Message, role: str) -> bool:
 
 
 class IsMentor:
-    def __call__(self, message: Message) -> bool:
-        return check_role(message, ROLE_MENTOR)
+    async def __call__(self, message: Message) -> bool:
+        return await check_role(message, ROLE_MENTOR)
 
 
 class IsAdmin:
-    def __call__(self, message: Message) -> bool:
-        return check_role(message, ROLE_ADMIN)
+    async def __call__(self, message: Message) -> bool:
+        return await check_role(message, ROLE_ADMIN)
 
 
 # ==================== ХЕЛПЕРЫ ====================
@@ -279,7 +287,7 @@ async def admin_handler(message: Message, state: FSMContext):
         return
     
     await state.clear()
-    role = get_user_role(user_id=message.from_user.id)
+    role = await get_user_role(user_id=message.from_user.id)
     kb_map = {ROLE_ADMIN: admin_kb, ROLE_MENTOR: mentor_kb}
     text_map = {ROLE_ADMIN: "🔧 Панель администратора", ROLE_MENTOR: "🎓 Панель ментора"}
     
@@ -319,7 +327,7 @@ async def handle_stage_selection(message: Message, state: FSMContext):
     next_action = data.get("next_action")
     
     if next_action == "show_list":
-        mats = get_materials(stage)
+        mats = await get_materials(stage)
         stage_name = STAGES[stage]
         if not mats:
             text = f"📭 *{stage_name}*\n\nПусто."
@@ -334,7 +342,7 @@ async def handle_stage_selection(message: Message, state: FSMContext):
         await message.answer("Введите название:", reply_markup=back_kb)
     
     elif next_action == "select_for_edit":
-        mats = get_materials(stage)
+        mats = await get_materials(stage)
         if not mats:
             await message.answer("📭 Пусто", reply_markup=stage_kb)
             return
@@ -347,7 +355,7 @@ async def handle_stage_selection(message: Message, state: FSMContext):
         await message.answer("Выберите материал:", reply_markup=kb)
     
     elif next_action == "select_for_delete":
-        mats = get_materials(stage)
+        mats = await get_materials(stage)
         if not mats:
             await message.answer("📭 Пусто", reply_markup=stage_kb)
             return
@@ -360,7 +368,7 @@ async def handle_stage_selection(message: Message, state: FSMContext):
         await message.answer("Выберите для удаления:", reply_markup=kb)
     
     elif next_action == "public_show":
-        mats = get_materials(stage)
+        mats = await get_materials(stage)
         stage_name = STAGES[stage]
         if not mats:
             text = f"📭 *{stage_name}*\n\nПока пусто."
@@ -405,7 +413,7 @@ async def material_add_desc(message: Message, state: FSMContext):
         await message.answer("❌ Описание слишком длинное (макс 1000 символов)")
         return
     data = await state.get_data()
-    add_material(data['stage'], data['title'], data['link'], desc)
+    await add_material(data['stage'], data['title'], data['link'], desc)
     await message.answer(f"✅ Добавлено в *{STAGES[data['stage']]}*!", parse_mode="Markdown")
     await materials_menu(message, state)
 
@@ -425,7 +433,7 @@ async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
     except (ValueError, IndexError):
         await callback.message.edit_text("❌ Некорректные данные")
         return
-    mat = get_material(mat_id)
+    mat = await get_material(mat_id)
     if not mat:
         await callback.message.edit_text("❌ Не найдено")
         return
@@ -455,7 +463,7 @@ async def material_edit_process(message: Message, state: FSMContext):
         updates['description'] = parts[2]
     
     if updates:
-        update_material(mat_id, **updates)
+        await update_material(mat_id, **updates)
         await message.answer("✅ Обновлено!")
     else:
         await message.answer("❌ Ничего не изменено")
@@ -477,8 +485,8 @@ async def material_delete_callback(callback: CallbackQuery, state: FSMContext):
     except (ValueError, IndexError):
         await callback.message.edit_text("❌ Некорректные данные")
         return
-    mat = get_material(mat_id)
-    if delete_material(mat_id):
+    mat = await get_material(mat_id)
+    if await delete_material(mat_id):
         await callback.message.edit_text(f"✅ Удалено: {mat['title'] if mat else mat_id}")
     else:
         await callback.message.edit_text("❌ Ошибка")
@@ -488,7 +496,7 @@ async def material_delete_callback(callback: CallbackQuery, state: FSMContext):
 # --- Статистика материалов ---
 
 async def material_stats(message: Message, state: FSMContext):
-    stats = get_materials_stats()
+    stats = await get_materials_stats()
     total = sum(stats.values())
     text = f"📊 *Всего материалов: {total}*\n\n" + "\n".join(
         f"{STAGES[st]}: `{cnt}`" for st, cnt in stats.items()
@@ -508,7 +516,7 @@ async def events_menu(message: Message, state: FSMContext):
 
 
 async def events_show_all(message: Message, state: FSMContext):
-    events = get_events()
+    events = await get_events()
     if not events:
         text = "📭 Нет событий"
     else:
@@ -565,7 +573,7 @@ async def event_add_announcement(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     try:
-        add_event(data['event_type'], data['event_datetime'], data['event_link'], ann)
+        await add_event(data['event_type'], data['event_datetime'], data['event_link'], ann)
         await message.answer("✅ Событие добавлено!")
     except Exception as e:
         logging.error(e)
@@ -576,7 +584,7 @@ async def event_add_announcement(message: Message, state: FSMContext):
 # --- Редактирование событий ---
 
 async def event_edit_select(message: Message, state: FSMContext):
-    events = get_events()
+    events = await get_events()
     if not events:
         await message.answer("📭 Нет событий", reply_markup=events_menu_kb)
         return
@@ -596,7 +604,7 @@ async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
     except (ValueError, IndexError):
         await callback.message.edit_text("❌ Некорректные данные")
         return
-    events = get_events()
+    events = await get_events()
     ev = next((e for e in events if e['id'] == ev_id), None)
     if not ev:
         await callback.message.edit_text("❌ Не найдено")
@@ -630,7 +638,7 @@ async def event_edit_process(message: Message, state: FSMContext):
     if len(parts) > 3 and parts[3] != '.':
         updates['announcement'] = parts[3]
     if updates:
-        update_event(ev_id, **updates)
+        await update_event(ev_id, **updates)
         await message.answer("✅ Обновлено!")
     else:
         await message.answer("❌ Ничего не изменено")
@@ -640,7 +648,7 @@ async def event_edit_process(message: Message, state: FSMContext):
 # --- Удаление событий ---
 
 async def event_delete_select(message: Message, state: FSMContext):
-    events = get_events()
+    events = await get_events()
     if not events:
         await message.answer("📭 Нет событий", reply_markup=events_menu_kb)
         return
@@ -659,7 +667,7 @@ async def event_delete_callback(callback: CallbackQuery, state: FSMContext):
     except (ValueError, IndexError):
         await callback.message.edit_text("❌ Некорректные данные")
         return
-    if delete_event(ev_id):
+    if await delete_event(ev_id):
         await callback.message.edit_text(f"✅ Событие {ev_id} удалено")
     else:
         await callback.message.edit_text("❌ Ошибка")
@@ -689,7 +697,7 @@ async def roles_menu(message: Message, state: FSMContext):
 
 async def roles_show(message: Message, state: FSMContext):
     """Показать список всех пользователей."""
-    users = get_all_users()
+    users = await get_all_users()
     if not users:
         await message.answer("📭 Пользователей нет")
         await roles_menu(message, state)
@@ -778,7 +786,7 @@ async def role_set_callback(callback: CallbackQuery, state: FSMContext):
         return
     
     # Назначаем роли
-    set_users_batch(users, role)
+    await set_users_batch(users, role)
     
     await callback.message.edit_text(
         f"✅ Роль `{role}` назначена для *{len(users)}* пользователей!"
@@ -790,7 +798,7 @@ async def role_set_callback(callback: CallbackQuery, state: FSMContext):
 
 async def role_delete_start(message: Message, state: FSMContext):
     """Начало удаления пользователя."""
-    users = get_all_users()
+    users = await get_all_users()
     if not users:
         await message.answer("📭 Нет пользователей", reply_markup=roles_menu_kb)
         return
@@ -837,9 +845,9 @@ async def role_delete_callback(callback: CallbackQuery, state: FSMContext):
     key_value = parts[2]
     
     if key_type == "id":
-        success = delete_user(user_id=int(key_value))
+        success = await delete_user(user_id=int(key_value))
     else:  # key_type == "un"
-        success = delete_user(username=key_value)
+        success = await delete_user(username=key_value)
     
     if success:
         await callback.message.edit_text(f"✅ Пользователь удалён")
@@ -879,7 +887,7 @@ async def public_events_show(message: Message):
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     
-    events = get_events(upcoming_only=True)
+    events = await get_events(upcoming_only=True)
     if not events:
         await message.answer("📭 Нет предстоящих событий")
         return
@@ -913,7 +921,7 @@ async def bans_menu(message: Message, state: FSMContext):
     if not ok:
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
-    bans = get_active_bans()
+    bans = await get_active_bans()
     if not bans:
         await message.answer("✅ Активных банов нет.")
         return
@@ -948,11 +956,11 @@ async def ban_unban_callback(callback: CallbackQuery, state: FSMContext):
         return
 
     # Находим бан по id и снимаем
-    row = _db.fetchone("SELECT user_id, username FROM bans WHERE id = ?", (ban_id,))
+    row = await _db.fetchone("SELECT user_id, username FROM bans WHERE id = ?", (ban_id,))
     if not row:
         await callback.message.edit_text("❌ Бан не найден (уже истёк?)")
         return
-    unban_user(user_id=row[0], username=row[1])
+    await unban_user(user_id=row[0], username=row[1])
     who = f"@{row[1]}" if row[1] else f"ID:{row[0]}"
     await callback.message.edit_text(f"✅ Бан снят: {who}")
 
@@ -981,7 +989,7 @@ async def search_handler(message: Message):
         await message.answer("❌ Запрос слишком длинный (макс 100 символов)")
         return
 
-    results = search_materials(query)
+    results = await search_materials(query)
     if not results:
         await message.answer(f"🔍 По запросу *{query}* ничего не найдено.", parse_mode="Markdown")
         return
@@ -994,6 +1002,22 @@ async def search_handler(message: Message):
         lines.append(f"\n_...и ещё {len(results) - 20} результатов_")
 
     await message.answer("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
+
+
+async def error_handler(event, exception):
+    """Global error handler to prevent bot from crashing."""
+    logging.error(f"Error occurred: {exception}", exc_info=True)
+    # Try to notify user if possible
+    if hasattr(event, 'message') and event.message:
+        try:
+            await event.message.answer("❌ Произошла ошибка. Попробуйте позже.")
+        except:
+            pass
+    elif hasattr(event, 'callback_query') and event.callback_query:
+        try:
+            await event.callback_query.answer("❌ Ошибка!")
+        except:
+            pass
 
 
 # ==================== РЕГИСТРАЦИЯ ====================
@@ -1050,3 +1074,6 @@ def register_handlers(dp):
     # Баны
     dp.message.register(bans_menu, F.text == "🚫 Управление банами", IsAdmin())
     dp.callback_query.register(ban_unban_callback, F.data.startswith("unban:"), IsAdmin())
+    
+    # Global error handler
+    dp.errors.register(error_handler)

@@ -1,6 +1,5 @@
-import sqlite3
+import aiosqlite
 import logging
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from aiogram.types import Message
 
@@ -8,46 +7,38 @@ from config import DB_NAME, STAGES
 
 
 class Database:
-    """Класс для работы с SQLite."""
+    """Асинхронный класс для работы с SQLite."""
     
     def __init__(self, db_path: str = DB_NAME):
         self.db_path = db_path
     
-    @contextmanager
-    def _connect(self):
-        conn = sqlite3.connect(self.db_path)
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
-    
-    def execute(self, query: str, params: tuple = ()) -> int:
+    async def execute(self, query: str, params: tuple = ()) -> int:
         """Выполнить запрос, вернуть rowcount."""
-        with self._connect() as conn:
-            cursor = conn.execute(query, params)
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(query, params)
+            await db.commit()
             return cursor.rowcount
     
-    def fetchone(self, query: str, params: tuple = ()):
+    async def fetchone(self, query: str, params: tuple = ()):
         """Получить одну запись."""
-        with self._connect() as conn:
-            cursor = conn.execute(query, params)
-            return cursor.fetchone()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(query, params)
+            return await cursor.fetchone()
     
-    def fetchall(self, query: str, params: tuple = ()) -> list:
+    async def fetchall(self, query: str, params: tuple = ()) -> list:
         """Получить все записи."""
-        with self._connect() as conn:
-            cursor = conn.execute(query, params)
-            return cursor.fetchall()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(query, params)
+            return await cursor.fetchall()
     
-    def init_tables(self):
+    async def init_tables(self):
         """Инициализация таблиц."""
-        with self._connect() as conn:
+        async with aiosqlite.connect(self.db_path) as db:
             # Миграция user_roles
-            self._migrate_user_roles()
+            await self._migrate_user_roles(db)
             
             # Materials
-            conn.execute("""
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS materials (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     stage TEXT NOT NULL CHECK (stage IN ('fundamental', 'practical_theory', 'practical_tasks', 'roadmap')),
@@ -59,7 +50,7 @@ class Database:
             """)
             
             # Events
-            conn.execute("""
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     event_type TEXT NOT NULL,
@@ -71,7 +62,7 @@ class Database:
             """)
             
             # Неудачные попытки авторизации
-            conn.execute("""
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS failed_attempts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER UNIQUE,
@@ -83,7 +74,7 @@ class Database:
             """)
             
             # Баны (mute)
-            conn.execute("""
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS bans (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
@@ -96,101 +87,98 @@ class Database:
             """)
             
             # Создаем индексы для быстрого поиска
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_bans_active ON bans(user_id, username, banned_until)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_failed_user ON failed_attempts(user_id, username)")
-        
-        # Миграция materials
-        self._migrate_materials()
-        
-        # Создание индексов
-        with self._connect() as conn:
-            # На user_roles индексы не нужны - есть UNIQUE ограничения
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_bans_user ON bans(user_id, username)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_bans_active ON bans(user_id, username, banned_until)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_failed_user ON failed_attempts(user_id, username)")
+            
+            # Миграция materials
+            await self._migrate_materials(db)
+            
+            # Создание индексов
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_bans_user ON bans(user_id, username)")
+            
+            await db.commit()
         
         logging.info(f"База данных '{self.db_path}' готова")
     
-    def _migrate_user_roles(self):
+    async def _migrate_user_roles(self, db: aiosqlite.Connection):
         """Миграция: создание таблицы с правильными UNIQUE ограничениями."""
-        with self._connect() as conn:
-            # Проверяем, существует ли таблица
-            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_roles'")
-            if not cursor.fetchone():
-                # Таблицы нет - создаем новую с правильной схемой
-                conn.execute("""
-                    CREATE TABLE user_roles (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER UNIQUE,
-                        username TEXT UNIQUE,
-                        role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
-                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                        CHECK (user_id IS NOT NULL OR username IS NOT NULL)
-                    )
-                """)
-                logging.info("Создана таблица user_roles")
-                return
-            
-            # Проверяем текущую схему таблицы
-            cursor = conn.execute("PRAGMA table_info(user_roles)")
-            columns = {row[1]: row for row in cursor.fetchall()}
-            
-            # Если есть колонка 'id' - значит новая схема, ничего не делаем
-            if 'id' in columns:
-                return
-            
-            # Старая схема с составным PRIMARY KEY - нужна миграция
-            logging.warning("Миграция: исправление структуры user_roles")
-            
-            conn.executescript("""
-                DROP TABLE IF EXISTS user_roles_new;
-                
-                CREATE TABLE user_roles_new (
+        # Проверяем, существует ли таблица
+        cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_roles'")
+        if not await cursor.fetchone():
+            # Таблицы нет - создаем новую с правильной схемой
+            await db.execute("""
+                CREATE TABLE user_roles (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER UNIQUE,
                     username TEXT UNIQUE,
                     role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     CHECK (user_id IS NOT NULL OR username IS NOT NULL)
-                );
+                )
             """)
-            
-            # Переносим данные
-            if 'created_at' in columns:
-                conn.execute("""
-                    INSERT INTO user_roles_new (user_id, username, role, created_at)
-                    SELECT user_id, username, role, created_at FROM user_roles
-                """)
-            else:
-                conn.execute("""
-                    INSERT INTO user_roles_new (user_id, username, role, created_at)
-                    SELECT user_id, username, role, CURRENT_TIMESTAMP FROM user_roles
-                """)
-            
-            conn.execute("DROP TABLE user_roles")
-            conn.execute("ALTER TABLE user_roles_new RENAME TO user_roles")
-            logging.info("Миграция user_roles выполнена")
+            logging.info("Создана таблица user_roles")
+            return
+        
+        # Проверяем текущую схему таблицы
+        cursor = await db.execute("PRAGMA table_info(user_roles)")
+        columns = {row[1]: row for row in await cursor.fetchall()}
+        
+        # Если есть колонка 'id' - значит новая схема, ничего не делаем
+        if 'id' in columns:
+            return
+        
+        # Старая схема с составным PRIMARY KEY - нужна миграция
+        logging.warning("Миграция: исправление структуры user_roles")
+        
+        await db.execute("DROP TABLE IF EXISTS user_roles_new")
+        await db.execute("""
+            CREATE TABLE user_roles_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER UNIQUE,
+                username TEXT UNIQUE,
+                role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                CHECK (user_id IS NOT NULL OR username IS NOT NULL)
+            )
+        """)
+        
+        # Переносим данные
+        if 'created_at' in columns:
+            await db.execute("""
+                INSERT INTO user_roles_new (user_id, username, role, created_at)
+                SELECT user_id, username, role, created_at FROM user_roles
+            """)
+        else:
+            await db.execute("""
+                INSERT INTO user_roles_new (user_id, username, role, created_at)
+                SELECT user_id, username, role, CURRENT_TIMESTAMP FROM user_roles
+            """)
+        
+        await db.execute("DROP TABLE user_roles")
+        await db.execute("ALTER TABLE user_roles_new RENAME TO user_roles")
+        logging.info("Миграция user_roles выполнена")
     
-    def _migrate_materials(self):
+    async def _migrate_materials(self, db: aiosqlite.Connection):
         """Миграция: добавление поля stage."""
         try:
-            self.fetchone("SELECT stage FROM materials LIMIT 1")
-        except sqlite3.OperationalError:
+            await db.execute("SELECT stage FROM materials LIMIT 1")
+        except aiosqlite.OperationalError:
             logging.warning("Миграция: добавление поля stage")
-            with self._connect() as conn:
-                conn.execute("ALTER TABLE materials RENAME TO materials_old")
-                conn.executescript("""
-                    CREATE TABLE materials (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        stage TEXT NOT NULL CHECK (stage IN ('fundamental', 'practical_theory', 'practical_tasks', 'roadmap')),
-                        title TEXT NOT NULL,
-                        link TEXT NOT NULL,
-                        description TEXT,
-                        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                    );
-                    INSERT INTO materials (id, stage, title, link, description, created_at)
-                    SELECT id, 'fundamental', title, link, description, created_at FROM materials_old;
-                    DROP TABLE materials_old;
-                """)
-                logging.info("Миграция materials выполнена")
+            await db.execute("ALTER TABLE materials RENAME TO materials_old")
+            await db.executescript("""
+                CREATE TABLE materials (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stage TEXT NOT NULL CHECK (stage IN ('fundamental', 'practical_theory', 'practical_tasks', 'roadmap')),
+                    title TEXT NOT NULL,
+                    link TEXT NOT NULL,
+                    description TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO materials (id, stage, title, link, description, created_at)
+                SELECT id, 'fundamental', title, link, description, created_at FROM materials_old;
+                DROP TABLE materials_old;
+            """)
+            logging.info("Миграция materials выполнена")
 
 
 # Глобальный экземпляр БД
@@ -199,9 +187,9 @@ db = Database()
 
 # ==================== УТИЛИТЫ ====================
 
-def init_db(db_path: str = DB_NAME):
+async def init_db(db_path: str = DB_NAME):
     """Инициализация (для совместимости)."""
-    Database(db_path).init_tables()
+    await Database(db_path).init_tables()
 
 
 # ==================== USER ROLES (с username) ====================
@@ -216,9 +204,9 @@ def normalize_username(username: str | None) -> str | None:
     return username if username else None
 
 
-def get_user_by_id(user_id: int) -> dict | None:
+async def get_user_by_id(user_id: int) -> dict | None:
     """Найти пользователя по ID."""
-    row = db.fetchone(
+    row = await db.fetchone(
         "SELECT user_id, username, role FROM user_roles WHERE user_id = ?",
         (user_id,)
     )
@@ -227,12 +215,12 @@ def get_user_by_id(user_id: int) -> dict | None:
     return None
 
 
-def get_user_by_username(username: str) -> dict | None:
+async def get_user_by_username(username: str) -> dict | None:
     """Найти пользователя по username."""
     username = normalize_username(username)
     if not username:
         return None
-    row = db.fetchone(
+    row = await db.fetchone(
         "SELECT user_id, username, role FROM user_roles WHERE username = ?",
         (username,)
     )
@@ -241,23 +229,22 @@ def get_user_by_username(username: str) -> dict | None:
     return None
 
 
-def get_user_role(user_id: int = None, username: str = None) -> str | None:
+async def get_user_role(user_id: int = None, username: str = None) -> str | None:
     """Получить роль по ID или username (оптимизировано - один запрос)."""
     username = normalize_username(username)
     
     if user_id and username:
-        # Ищем по ID ИЛИ username одним запросом
-        row = db.fetchone(
+        row = await db.fetchone(
             "SELECT role FROM user_roles WHERE user_id = ? OR username = ? LIMIT 1",
             (user_id, username)
         )
     elif user_id:
-        row = db.fetchone(
+        row = await db.fetchone(
             "SELECT role FROM user_roles WHERE user_id = ? LIMIT 1",
             (user_id,)
         )
     elif username:
-        row = db.fetchone(
+        row = await db.fetchone(
             "SELECT role FROM user_roles WHERE username = ? LIMIT 1",
             (username,)
         )
@@ -273,7 +260,6 @@ def validate_user_id(user_id: any) -> int | None:
         return None
     try:
         uid = int(user_id)
-        # Telegram ID должен быть положительным и не слишком большим
         if 0 < uid < 10_000_000_000:
             return uid
     except (ValueError, TypeError):
@@ -281,15 +267,15 @@ def validate_user_id(user_id: any) -> int | None:
     return None
 
 
-def get_all_users() -> list[dict]:
+async def get_all_users() -> list[dict]:
     """Получить всех пользователей."""
-    rows = db.fetchall(
+    rows = await db.fetchall(
         "SELECT user_id, username, role FROM user_roles ORDER BY role, COALESCE(username, ''), user_id"
     )
     return [{"user_id": r[0], "username": r[1], "role": r[2]} for r in rows]
 
 
-def add_or_update_user(user_id: int = None, username: str = None, role: str = None) -> bool:
+async def add_or_update_user(user_id: int = None, username: str = None, role: str = None) -> bool:
     """
     Добавить или обновить пользователя.
     Можно указать только user_id, только username, или оба.
@@ -302,43 +288,38 @@ def add_or_update_user(user_id: int = None, username: str = None, role: str = No
     username = normalize_username(username)
     
     # Ищем существующую запись по ID или username
-    existing_by_id = get_user_by_id(user_id) if user_id else None
-    existing_by_username = get_user_by_username(username) if username else None
+    existing_by_id = await get_user_by_id(user_id) if user_id else None
+    existing_by_username = await get_user_by_username(username) if username else None
     
     # Определяем итоговые значения
     final_user_id = user_id
     final_username = username
     
-    # Если нашли по ID - берем username оттуда если наш не указан
-    if existing_by_id:
-        if not final_username and existing_by_id.get("username"):
-            final_username = existing_by_id["username"]
+    if existing_by_id and not final_username:
+        final_username = existing_by_id.get("username")
+    if existing_by_username and not final_user_id:
+        final_user_id = existing_by_username.get("user_id")
     
-    # Если нашли по username - берем ID оттуда если наш не указан
-    if existing_by_username:
-        if not final_user_id and existing_by_username.get("user_id"):
-            final_user_id = existing_by_username["user_id"]
-    
-    # Удаляем все старые записи которые конфликтуют
+    # Удаляем старые записи
     ids_to_delete = set()
-    if existing_by_id:
-        ids_to_delete.add(existing_by_id.get("user_id"))
-    if existing_by_username:
-        ids_to_delete.add(existing_by_username.get("user_id"))
+    if existing_by_id and existing_by_id.get("user_id"):
+        ids_to_delete.add(existing_by_id["user_id"])
+    if existing_by_username and existing_by_username.get("user_id"):
+        ids_to_delete.add(existing_by_username["user_id"])
     
     for uid in ids_to_delete:
         if uid is not None:
-            db.execute("DELETE FROM user_roles WHERE user_id = ?", (uid,))
+            await db.execute("DELETE FROM user_roles WHERE user_id = ?", (uid,))
     
-    # Удаляем по username тоже (на случай если есть запись только с username)
+    # Удаляем по username
     if existing_by_username and existing_by_username.get("username"):
-        db.execute("DELETE FROM user_roles WHERE username = ?", (existing_by_username["username"],))
+        await db.execute("DELETE FROM user_roles WHERE username = ?", (existing_by_username["username"],))
     if existing_by_id and existing_by_id.get("username") and existing_by_id.get("username") != final_username:
-        db.execute("DELETE FROM user_roles WHERE username = ?", (existing_by_id["username"],))
+        await db.execute("DELETE FROM user_roles WHERE username = ?", (existing_by_id["username"],))
     
-    # Вставляем новую запись (или обновляем через UPSERT)
+    # Вставляем новую запись
     try:
-        db.execute(
+        await db.execute(
             """
             INSERT INTO user_roles (user_id, username, role) 
             VALUES (?, ?, ?)
@@ -348,10 +329,9 @@ def add_or_update_user(user_id: int = None, username: str = None, role: str = No
             """,
             (final_user_id, final_username, role)
         )
-    except sqlite3.IntegrityError:
-        # Конфликт по username - обновляем существующую запись с этим username
+    except aiosqlite.IntegrityError:
         if final_username:
-            db.execute(
+            await db.execute(
                 "UPDATE user_roles SET user_id = ?, role = ? WHERE username = ?",
                 (final_user_id, role, final_username)
             )
@@ -361,13 +341,13 @@ def add_or_update_user(user_id: int = None, username: str = None, role: str = No
     return True
 
 
-def set_users_batch(users: list[dict], role: str):
+async def set_users_batch(users: list[dict], role: str):
     """
     Массовое назначение роли.
     users: список словарей [{'user_id': 123, 'username': '@name'}, ...]
     """
     for user in users:
-        add_or_update_user(
+        await add_or_update_user(
             user_id=user.get("user_id"),
             username=user.get("username"),
             role=role
@@ -375,36 +355,31 @@ def set_users_batch(users: list[dict], role: str):
     logging.info(f"Роли {len(users)} пользователей -> {role}")
 
 
-def delete_user(user_id: int = None, username: str = None) -> bool:
+async def delete_user(user_id: int = None, username: str = None) -> bool:
     """Удалить пользователя по ID или username."""
     if user_id is not None:
-        deleted = db.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
+        deleted = await db.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
         if deleted > 0:
             return True
     if username:
         username = normalize_username(username)
-        deleted = db.execute("DELETE FROM user_roles WHERE username = ?", (username,))
+        deleted = await db.execute("DELETE FROM user_roles WHERE username = ?", (username,))
         if deleted > 0:
             return True
     return False
 
 
-def setup_initial_users(db_path: str = DB_NAME, initial_admin_id: int = None):
-    """Начальная настройка.
-    
-    Args:
-        db_path: путь к базе данных
-        initial_admin_id: ID начального админа (из переменной окружения INITIAL_ADMIN_ID)
-    """
+async def setup_initial_users(db_path: str = DB_NAME, initial_admin_id: int = None):
+    """Начальная настройка."""
     from config import ROLE_ADMIN
     import os
     
-    # Очищаем истекшие баны при старте
-    cleanup_expired_bans()
+    await cleanup_expired_bans()
     
-    count = db.fetchone("SELECT COUNT(*) FROM user_roles")[0]
+    count_row = await db.fetchone("SELECT COUNT(*) FROM user_roles")
+    count = count_row[0] if count_row else 0
+    
     if count == 0:
-        # Получаем ID начального админа из переменной окружения
         admin_id_from_env = os.getenv("INITIAL_ADMIN_ID", "").strip()
         admin_id = initial_admin_id
         
@@ -412,7 +387,7 @@ def setup_initial_users(db_path: str = DB_NAME, initial_admin_id: int = None):
             admin_id = int(admin_id_from_env)
         
         if admin_id:
-            add_or_update_user(user_id=admin_id, role=ROLE_ADMIN)
+            await add_or_update_user(user_id=admin_id, role=ROLE_ADMIN)
             logging.warning(f"Добавлен начальный админ (ID: {admin_id})")
         else:
             logging.warning(
@@ -424,21 +399,20 @@ def setup_initial_users(db_path: str = DB_NAME, initial_admin_id: int = None):
 
 # ==================== RATE LIMITING & BANS ====================
 
-def cleanup_expired_bans():
+async def cleanup_expired_bans():
     """Удалить истекшие баны (можно вызывать периодически)."""
-    deleted = db.execute("DELETE FROM bans WHERE banned_until <= datetime('now')")
+    deleted = await db.execute("DELETE FROM bans WHERE banned_until <= datetime('now')")
     if deleted > 0:
         logging.info(f"Очищено {deleted} истекших банов")
 
 
-def get_ban_status(user_id: int = None, username: str = None) -> dict | None:
+async def get_ban_status(user_id: int = None, username: str = None) -> dict | None:
     """
     Проверить статус бана пользователя.
     Returns: {'ban_level': int, 'banned_until': datetime} или None если не забанен
     """
     username = normalize_username(username)
     
-    # Оптимизированный запрос с проверкой на NULL
     if user_id and username:
         query = """
             SELECT ban_level, banned_until FROM bans 
@@ -464,7 +438,7 @@ def get_ban_status(user_id: int = None, username: str = None) -> dict | None:
     else:
         return None
     
-    row = db.fetchone(query, params)
+    row = await db.fetchone(query, params)
     if row:
         return {
             "ban_level": row[0],
@@ -473,74 +447,68 @@ def get_ban_status(user_id: int = None, username: str = None) -> dict | None:
     return None
 
 
-def record_failed_attempt(user_id: int = None, username: str = None) -> dict | None:
+async def record_failed_attempt(user_id: int = None, username: str = None) -> dict | None:
     """
     Записать неудачную попытку авторизации.
     Returns: информация о бане если применен, иначе None
     """
     username = normalize_username(username)
     
-    # Обновляем или создаем запись о неудачной попытке
-    existing = db.fetchone(
+    existing = await db.fetchone(
         "SELECT attempt_count FROM failed_attempts WHERE user_id = ? OR username = ?",
         (user_id, username)
     )
     
     if existing:
         new_count = existing[0] + 1
-        db.execute(
+        await db.execute(
             "UPDATE failed_attempts SET attempt_count = ?, last_attempt = datetime('now') WHERE user_id = ? OR username = ?",
             (new_count, user_id, username)
         )
     else:
         new_count = 1
-        db.execute(
+        await db.execute(
             "INSERT INTO failed_attempts (user_id, username, attempt_count) VALUES (?, ?, ?)",
             (user_id, username, new_count)
         )
     
-    # Проверяем нужно ли выдать бан (каждые 3 попытки)
     if new_count >= 3:
-        return apply_ban(user_id, username)
+        return await apply_ban(user_id, username)
     
     return None
 
 
-def apply_ban(user_id: int = None, username: str = None) -> dict:
+async def apply_ban(user_id: int = None, username: str = None) -> dict:
     """
     Применить бан на основе предыдущих банов.
     Возвращает информацию о примененном бане.
     """
     username = normalize_username(username)
     
-    # Определяем уровень бана
-    existing_ban = db.fetchone(
+    existing_ban = await db.fetchone(
         "SELECT ban_level FROM bans WHERE user_id = ? OR username = ? ORDER BY created_at DESC LIMIT 1",
         (user_id, username)
     )
     
     if existing_ban:
-        ban_level = min(existing_ban[0] + 1, 3)  # Макс уровень 3
+        ban_level = min(existing_ban[0] + 1, 3)
     else:
         ban_level = 1
     
-    # Вычисляем время бана
     now = datetime.now()
     if ban_level == 1:
         banned_until = now + timedelta(minutes=5)
     elif ban_level == 2:
         banned_until = now + timedelta(minutes=10)
-    else:  # ban_level == 3
+    else:
         banned_until = now + timedelta(days=30)
     
-    # Сохраняем бан
-    db.execute(
+    await db.execute(
         "INSERT OR REPLACE INTO bans (user_id, username, ban_level, banned_until) VALUES (?, ?, ?, ?)",
         (user_id, username, ban_level, banned_until.isoformat())
     )
     
-    # Сбрасываем счетчик неудачных попыток
-    db.execute(
+    await db.execute(
         "DELETE FROM failed_attempts WHERE user_id = ? OR username = ?",
         (user_id, username)
     )
@@ -553,33 +521,32 @@ def apply_ban(user_id: int = None, username: str = None) -> dict:
     }
 
 
-def clear_failed_attempts(user_id: int = None, username: str = None):
+async def clear_failed_attempts(user_id: int = None, username: str = None):
     """Очистить счетчик неудачных попыток (при успешной авторизации)."""
     username = normalize_username(username)
-    db.execute(
+    await db.execute(
         "DELETE FROM failed_attempts WHERE user_id = ? OR username = ?",
         (user_id, username)
     )
 
 
-def unban_user(user_id: int = None, username: str = None) -> bool:
+async def unban_user(user_id: int = None, username: str = None) -> bool:
     """Снять бан с пользователя (для админов)."""
     username = normalize_username(username)
-    deleted = db.execute(
+    deleted = await db.execute(
         "DELETE FROM bans WHERE user_id = ? OR username = ?",
         (user_id, username)
     )
-    # Также очищаем неудачные попытки
-    db.execute(
+    await db.execute(
         "DELETE FROM failed_attempts WHERE user_id = ? OR username = ?",
         (user_id, username)
     )
     return deleted > 0
 
 
-def get_active_bans() -> list[dict]:
+async def get_active_bans() -> list[dict]:
     """Получить список активных банов."""
-    rows = db.fetchall(
+    rows = await db.fetchall(
         "SELECT id, user_id, username, ban_level, banned_until FROM bans "
         "WHERE banned_until > datetime('now') ORDER BY banned_until DESC"
     )
@@ -593,16 +560,14 @@ def get_active_bans() -> list[dict]:
 
 class IsAuthorizedUser:
     """Проверка авторизации по ID или username."""
-    def __call__(self, message: Message) -> bool:
+    async def __call__(self, message: Message) -> bool:
         user_id = message.from_user.id
         username = message.from_user.username
         
-        # Проверяем по ID
-        if get_user_by_id(user_id):
+        if await get_user_by_id(user_id):
             return True
         
-        # Проверяем по username
-        if username and get_user_by_username(username):
+        if username and await get_user_by_username(username):
             return True
         
         return False
@@ -610,31 +575,30 @@ class IsAuthorizedUser:
 
 # ==================== EVENTS ====================
 
-def add_event(event_type: str, dt: str, link: str, announcement: str):
+async def add_event(event_type: str, dt: str, link: str, announcement: str):
     datetime.fromisoformat(dt.replace("Z", "+00:00"))
-    db.execute(
+    await db.execute(
         "INSERT INTO events (event_type, event_datetime, link, announcement) VALUES (?, ?, ?, ?)",
         (event_type, dt, link, announcement)
     )
 
 
-def get_events(upcoming_only: bool = False) -> list[dict]:
+async def get_events(upcoming_only: bool = False) -> list[dict]:
     query = "SELECT id, event_type, event_datetime, link, announcement FROM events"
     if upcoming_only:
         query += " WHERE event_datetime > datetime('now')"
     query += " ORDER BY event_datetime"
     
-    rows = db.fetchall(query)
+    rows = await db.fetchall(query)
     return [
         {"id": r[0], "type": r[1], "datetime": r[2], "link": r[3], "announcement": r[4]}
         for r in rows
     ]
 
 
-def update_event(event_id: int, **fields) -> bool:
+async def update_event(event_id: int, **fields) -> bool:
     allowed = frozenset({'event_type', 'event_datetime', 'link', 'announcement'})
     
-    # Строгая валидация ключей
     for key in fields:
         if key not in allowed:
             logging.warning(f"Попытка SQL-инъекции: недопустимый ключ '{key}'")
@@ -649,23 +613,23 @@ def update_event(event_id: int, **fields) -> bool:
     
     query = "UPDATE events SET " + ", ".join(f"{k}=?" for k in updates) + " WHERE id=?"
     params = list(updates.values()) + [event_id]
-    return db.execute(query, tuple(params)) > 0
+    return await db.execute(query, tuple(params)) > 0
 
 
-def delete_event(event_id: int) -> bool:
-    return db.execute("DELETE FROM events WHERE id = ?", (event_id,)) > 0
+async def delete_event(event_id: int) -> bool:
+    return await db.execute("DELETE FROM events WHERE id = ?", (event_id,)) > 0
 
 
 # ==================== MATERIALS ====================
 
-def add_material(stage: str, title: str, link: str, description: str = ""):
-    db.execute(
+async def add_material(stage: str, title: str, link: str, description: str = ""):
+    await db.execute(
         "INSERT INTO materials (stage, title, link, description) VALUES (?, ?, ?, ?)",
         (stage, title, link, description)
     )
 
 
-def get_materials(stage: str = None) -> list[dict]:
+async def get_materials(stage: str = None) -> list[dict]:
     query = "SELECT id, stage, title, link, description FROM materials"
     params = ()
     if stage:
@@ -673,15 +637,15 @@ def get_materials(stage: str = None) -> list[dict]:
         params = (stage,)
     query += " ORDER BY stage, created_at"
     
-    rows = db.fetchall(query, params)
+    rows = await db.fetchall(query, params)
     return [
         {"id": r[0], "stage": r[1], "title": r[2], "link": r[3], "description": r[4]}
         for r in rows
     ]
 
 
-def get_material(material_id: int) -> dict | None:
-    row = db.fetchone(
+async def get_material(material_id: int) -> dict | None:
+    row = await db.fetchone(
         "SELECT id, stage, title, link, description FROM materials WHERE id = ?",
         (material_id,)
     )
@@ -690,10 +654,9 @@ def get_material(material_id: int) -> dict | None:
     return None
 
 
-def update_material(material_id: int, **fields) -> bool:
+async def update_material(material_id: int, **fields) -> bool:
     allowed = frozenset({'stage', 'title', 'link', 'description'})
     
-    # Строгая валидация ключей
     for key in fields:
         if key not in allowed:
             logging.warning(f"Попытка SQL-инъекции: недопустимый ключ '{key}'")
@@ -705,24 +668,24 @@ def update_material(material_id: int, **fields) -> bool:
     
     query = "UPDATE materials SET " + ", ".join(f"{k}=?" for k in updates) + " WHERE id=?"
     params = list(updates.values()) + [material_id]
-    return db.execute(query, tuple(params)) > 0
+    return await db.execute(query, tuple(params)) > 0
 
 
-def delete_material(material_id: int) -> bool:
-    return db.execute("DELETE FROM materials WHERE id = ?", (material_id,)) > 0
+async def delete_material(material_id: int) -> bool:
+    return await db.execute("DELETE FROM materials WHERE id = ?", (material_id,)) > 0
 
 
-def get_materials_stats() -> dict:
-    rows = db.fetchall("SELECT stage, COUNT(*) FROM materials GROUP BY stage")
+async def get_materials_stats() -> dict:
+    rows = await db.fetchall("SELECT stage, COUNT(*) FROM materials GROUP BY stage")
     stats = {stage: 0 for stage in STAGES}
     stats.update({r[0]: r[1] for r in rows})
     return stats
 
 
-def search_materials(query: str) -> list[dict]:
+async def search_materials(query: str) -> list[dict]:
     """Поиск материалов по названию или описанию (case-insensitive)."""
     like = f"%{query.strip()}%"
-    rows = db.fetchall(
+    rows = await db.fetchall(
         "SELECT id, stage, title, link, description FROM materials "
         "WHERE title LIKE ? OR description LIKE ? ORDER BY stage, created_at",
         (like, like)
