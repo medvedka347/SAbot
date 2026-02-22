@@ -193,6 +193,19 @@ def is_valid_url(url: str) -> bool:
         return False
 
 
+async def safe_edit_text(callback: CallbackQuery, text: str, **kwargs):
+    """Безопасное редактирование сообщения с обработкой ошибок."""
+    try:
+        await callback.message.edit_text(text, **kwargs)
+    except Exception as e:
+        logging.debug(f"Cannot edit message: {e}")
+        # Пробуем отправить новое сообщение
+        try:
+            await callback.message.answer(text, **kwargs)
+        except Exception as e2:
+            logging.error(f"Cannot send message: {e2}")
+
+
 def get_stage_key(text: str) -> str | None:
     for key, name in STAGES.items():
         if name == text:
@@ -437,6 +450,8 @@ async def material_add_start(message: Message, state: FSMContext):
 
 
 async def material_add_title(message: Message, state: FSMContext):
+    if not message.text:
+        return
     if not check_length(message.text, 200):  # Название не длиннее 200 символов
         await message.answer("❌ Название слишком длинное (макс 200 символов)")
         return
@@ -446,6 +461,8 @@ async def material_add_title(message: Message, state: FSMContext):
 
 
 async def material_add_link(message: Message, state: FSMContext):
+    if not message.text:
+        return
     link = message.text.strip()
     if not is_valid_url(link):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
@@ -456,6 +473,8 @@ async def material_add_link(message: Message, state: FSMContext):
 
 
 async def material_add_desc(message: Message, state: FSMContext):
+    if not message.text:
+        return
     desc = message.text.strip()
     if desc.lower() in ['пропустить', 'нет', '-']:
         desc = ""
@@ -501,30 +520,40 @@ async def _handle_item_callback(
     await state.set_state(state_to_set)
     
     name = item.get(item_name_key, str(item_id))
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback,
         edit_template.format(name=name),
         parse_mode="Markdown"
     )
 
 
 async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
-    await _handle_item_callback(
-        callback, state,
-        getter_func=get_material,
-        state_to_set=Form.editing_field,
-        edit_template=(
-            "✏️ Редактирование *{name}*\n\n"
-            "Отправьте новые данные в формате:\n"
-            "`название\n\nссылка\n\nописание`\n\n"
-            "Используйте '.' для пропуска поля"
+    try:
+        await _handle_item_callback(
+            callback, state,
+            getter_func=get_material,
+            state_to_set=Form.editing_field,
+            edit_template=(
+                "✏️ Редактирование *{name}*\n\n"
+                "Отправьте новые данные в формате:\n"
+                "`название\n\nссылка\n\nописание`\n\n"
+                "Используйте '.' для пропуска поля"
+            )
         )
-    )
+    except Exception as e:
+        logging.error(f"Error in material_edit_callback: {e}")
+        await safe_edit_text(callback, "❌ Ошибка обработки")
 
 
 async def material_edit_process(message: Message, state: FSMContext):
+    if not message.text:
+        return
     data = await state.get_data()
-    mat_id = data['edit_id']
-    old = data['edit_mat']
+    mat_id = data.get('edit_id')
+    if not mat_id:
+        await state.clear()
+        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id))
+        return
     parts = [p.strip() for p in message.text.split('\n\n') if p.strip()]
     
     updates = {}
@@ -556,13 +585,13 @@ async def material_delete_callback(callback: CallbackQuery, state: FSMContext):
     try:
         mat_id = int(callback.data.split(":")[1])
     except (ValueError, IndexError):
-        await callback.message.edit_text("❌ Некорректные данные")
+        await safe_edit_text(callback, "❌ Некорректные данные")
         return
     mat = await get_material(mat_id)
     if await delete_material(mat_id):
-        await callback.message.edit_text(f"✅ Удалено: {mat['title'] if mat else mat_id}")
+        await safe_edit_text(callback, f"✅ Удалено: {mat['title'] if mat else mat_id}")
     else:
-        await callback.message.edit_text("❌ Ошибка")
+        await safe_edit_text(callback, "❌ Ошибка")
     await state.clear()
 
 
@@ -605,6 +634,8 @@ async def event_add_start(message: Message, state: FSMContext):
 
 
 async def event_add_type(message: Message, state: FSMContext):
+    if not message.text:
+        return
     if not check_length(message.text, 100):
         await message.answer("❌ Тип события слишком длинный (макс 100 символов)")
         return
@@ -614,6 +645,8 @@ async def event_add_type(message: Message, state: FSMContext):
 
 
 async def event_add_datetime(message: Message, state: FSMContext):
+    if not message.text:
+        return
     dt = message.text.strip()
     try:
         if datetime.fromisoformat(dt) <= datetime.now():
@@ -628,6 +661,8 @@ async def event_add_datetime(message: Message, state: FSMContext):
 
 
 async def event_add_link(message: Message, state: FSMContext):
+    if not message.text:
+        return
     link = message.text.strip()
     if link.lower() == "нет":
         link = ""
@@ -640,13 +675,22 @@ async def event_add_link(message: Message, state: FSMContext):
 
 
 async def event_add_announcement(message: Message, state: FSMContext):
+    if not message.text:
+        return
     ann = message.text.strip()
-    if not check_length(ann, 2000):  # Анонс не длиннее 2000 символов
+    if not check_length(ann, 2000):
         await message.answer("❌ Анонс слишком длинный (макс 2000 символов)")
         return
     data = await state.get_data()
+    event_type = data.get('event_type')
+    event_datetime = data.get('event_datetime')
+    event_link = data.get('event_link')
+    if not all([event_type, event_datetime]):
+        await state.clear()
+        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id))
+        return
     try:
-        await add_event(data['event_type'], data['event_datetime'], data['event_link'], ann)
+        await add_event(event_type, event_datetime, event_link, ann)
         await message.answer("✅ Событие добавлено!")
     except Exception as e:
         logging.error(e)
@@ -693,8 +737,14 @@ async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
 
 
 async def event_edit_process(message: Message, state: FSMContext):
+    if not message.text:
+        return
     data = await state.get_data()
-    ev_id = data['edit_id']
+    ev_id = data.get('edit_id')
+    if not ev_id:
+        await state.clear()
+        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id))
+        return
     parts = [p.strip() for p in message.text.split('\n\n') if p.strip()]
     updates = {}
     if parts and parts[0] != '.':
@@ -738,12 +788,12 @@ async def event_delete_callback(callback: CallbackQuery, state: FSMContext):
     try:
         ev_id = int(callback.data.split(":")[1])
     except (ValueError, IndexError):
-        await callback.message.edit_text("❌ Некорректные данные")
+        await safe_edit_text(callback, "❌ Некорректные данные")
         return
     if await delete_event(ev_id):
-        await callback.message.edit_text(f"✅ Событие {ev_id} удалено")
+        await safe_edit_text(callback, f"✅ Событие {ev_id} удалено")
     else:
-        await callback.message.edit_text("❌ Ошибка")
+        await safe_edit_text(callback, "❌ Ошибка")
     await state.clear()
 
 
@@ -814,6 +864,8 @@ async def role_add_start(message: Message, state: FSMContext):
 
 async def role_receive_users(message: Message, state: FSMContext):
     """Обработка ввода пользователей."""
+    if not message.text:
+        return
     users, errors = parse_users_input(message.text)
     
     if not users:
@@ -1042,6 +1094,8 @@ async def ban_unban_callback(callback: CallbackQuery, state: FSMContext):
 
 async def search_handler(message: Message):
     """Обработчик команды /search <запрос>."""
+    if not message.text:
+        return
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
