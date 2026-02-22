@@ -7,7 +7,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 
 from config import BOT_TOKEN, DB_NAME, ROLE_ADMIN, ROLE_MENTOR
-from db_utils import init_db, get_user_role, setup_initial_users, get_ban_status, record_failed_attempt, clear_failed_attempts, cleanup_expired_bans
+from db_utils import init_db, get_user_role, setup_initial_users, get_ban_status, record_failed_attempt, clear_failed_attempts, cleanup_expired_bans, update_user_id_by_username, get_user_by_username
 from admin_module import register_handlers, mentor_kb, admin_kb, user_kb, mock_kb, search_handler, IsAuthorizedUser, check_rate_limit
 
 logging.basicConfig(level=logging.INFO)
@@ -89,6 +89,13 @@ async def start_handler(message: Message):
     
     # Успешная авторизация - очищаем неудачные попытки
     await clear_failed_attempts(user_id=user_id, username=username)
+    
+    # Если пользователь был добавлен по username без ID - подхватываем его ID
+    if username:
+        user_from_db = await get_user_by_username(username)
+        if user_from_db and user_from_db.get("user_id") is None:
+            await update_user_id_by_username(username, user_id)
+            logging.info(f"Подхвачен user_id {user_id} для @{username} при первой авторизации")
     
     welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
     

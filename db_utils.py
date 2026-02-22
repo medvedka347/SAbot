@@ -78,7 +78,7 @@ class Database:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS failed_attempts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER UNIQUE,
+                    user_id BIGINT UNIQUE,
                     username TEXT UNIQUE,
                     attempt_count INTEGER DEFAULT 0,
                     last_attempt TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -90,7 +90,7 @@ class Database:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS bans (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
+                    user_id BIGINT,
                     username TEXT,
                     ban_level INTEGER DEFAULT 1 CHECK (ban_level IN (1, 2, 3)),
                     banned_until TEXT NOT NULL,
@@ -122,7 +122,7 @@ class Database:
             await db.execute("""
                 CREATE TABLE user_roles (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER UNIQUE,
+                    user_id BIGINT UNIQUE,
                     username TEXT UNIQUE,
                     role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -147,7 +147,7 @@ class Database:
         await db.execute("""
             CREATE TABLE user_roles_new (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER UNIQUE,
+                user_id BIGINT UNIQUE,
                 username TEXT UNIQUE,
                 role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -366,6 +366,29 @@ async def set_users_batch(users: list[dict], role: str):
             role=role
         )
     logging.info(f"Роли {len(users)} пользователей -> {role}")
+
+
+async def update_user_id_by_username(username: str, user_id: int) -> bool:
+    """Обновить user_id для пользователя, добавленного по username."""
+    username = normalize_username(username)
+    if not username or not user_id:
+        return False
+    
+    # Проверяем, существует ли пользователь с таким username и пустым user_id
+    existing = await get_user_by_username(username)
+    if existing and existing.get("user_id") is None:
+        await db.execute(
+            "UPDATE user_roles SET user_id = ? WHERE username = ?",
+            (user_id, username)
+        )
+        logging.info(f"Обновлен user_id для @{username}: {user_id}")
+        return True
+    
+    # Если user_id уже совпадает - тоже ок
+    if existing and existing.get("user_id") == user_id:
+        return True
+    
+    return False
 
 
 async def delete_user(user_id: int = None, username: str = None) -> bool:

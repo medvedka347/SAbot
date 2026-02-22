@@ -307,6 +307,17 @@ def parse_users_input(text: str) -> tuple[list[dict], list[str]]:
                 current_user["user_id"] = validated_id
             else:
                 errors.append(f"{part} (невалидный ID)")
+        # Проверяем, является ли часть username без @ (содержит буквы/цифры/_)
+        elif re.match(r'^[a-zA-Z0-9_]+$', part):
+            normalized = normalize_username(part)
+            if not normalized:
+                errors.append(part)
+                continue
+            # Если текущий пользователь уже имеет username - сохраняем и начинаем нового
+            if current_user.get("username"):
+                users.append(current_user)
+                current_user = {}
+            current_user["username"] = normalized
         else:
             errors.append(part)
     
