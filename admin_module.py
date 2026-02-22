@@ -23,13 +23,13 @@ from db_utils import (
 
 # In-memory хранилище для rate limiting: {user_id: [timestamps]}
 _rate_limits = {}
-RATE_LIMIT_WINDOW = 5.0  # Окно в секундах
-RATE_LIMIT_MAX_REQUESTS = 8  # Макс запросов за окно
-RATE_LIMIT_MIN_GAP = 0.3  # Минимальный gap между запросами (300ms)
+RATE_LIMIT_WINDOW = 10.0      # Увеличили окно до 10 секунд
+RATE_LIMIT_MAX_REQUESTS = 20  # Увеличили до 20 запросов за окно
+RATE_LIMIT_MIN_GAP = 0.15     # Уменьшили до 150ms между кликами
 
 def check_rate_limit(user_id: int) -> tuple[bool, int]:
-    """Проверка rate limit с burst-режимом.
-    Разрешает быстро нажимать кнопки, но ограничивает флуд.
+    """Очень мягкий rate limit для комфортной работы.
+    Позволяет быстро протыкивать кнопки без ограничений.
     Returns: (можно_обрабатывать, секунд_до_следующего_запроса)
     """
     from time import time
@@ -41,15 +41,16 @@ def check_rate_limit(user_id: int) -> tuple[bool, int]:
     # Очищаем старые записи (старше окна)
     _rate_limits[user_id] = [t for t in _rate_limits[user_id] if now - t < RATE_LIMIT_WINDOW]
     
-    # Проверяем минимальный gap с последним запросом
+    # Проверяем минимальный gap с последним запросом (очень мягко)
     if _rate_limits[user_id]:
         last_request = _rate_limits[user_id][-1]
         gap = now - last_request
         if gap < RATE_LIMIT_MIN_GAP:
-            wait = int(RATE_LIMIT_MIN_GAP - gap) + 1
+            # Не блокируем, просто говорим подождать чуть-чуть
+            wait = max(1, int(RATE_LIMIT_MIN_GAP - gap))
             return False, wait
     
-    # Проверяем количество запросов за окно
+    # Проверяем количество запросов за окно (очень мягко)
     if len(_rate_limits[user_id]) >= RATE_LIMIT_MAX_REQUESTS:
         oldest = _rate_limits[user_id][0]
         wait = int(RATE_LIMIT_WINDOW - (now - oldest)) + 1
