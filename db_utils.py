@@ -1,4 +1,5 @@
 import aiosqlite
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from aiogram.types import Message
@@ -7,27 +8,39 @@ from config import DB_NAME, STAGES
 
 
 class Database:
-    """Асинхронный класс для работы с SQLite."""
+    """Асинхронный класс для работы с SQLite с WAL режимом."""
     
     def __init__(self, db_path: str = DB_NAME):
         self.db_path = db_path
+        self._lock = asyncio.Lock()  # Для сериализации записей
+    
+    async def _init_connection(self, db):
+        """Включаем WAL режим для конкурентного доступа."""
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA synchronous=NORMAL")  # Баланс скорость/надёжность
+        await db.execute("PRAGMA cache_size=10000")  # Увеличиваем кэш
+        await db.execute("PRAGMA temp_store=MEMORY")
     
     async def execute(self, query: str, params: tuple = ()) -> int:
-        """Выполнить запрос, вернуть rowcount."""
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute(query, params)
-            await db.commit()
-            return cursor.rowcount
+        """Выполнить запрос с блокировкой для записей."""
+        async with self._lock:  # Сериализуем записи
+            async with aiosqlite.connect(self.db_path) as db:
+                await self._init_connection(db)
+                cursor = await db.execute(query, params)
+                await db.commit()
+                return cursor.rowcount
     
     async def fetchone(self, query: str, params: tuple = ()):
-        """Получить одну запись."""
+        """Получить одну запись (чтение параллельное)."""
         async with aiosqlite.connect(self.db_path) as db:
+            await self._init_connection(db)
             cursor = await db.execute(query, params)
             return await cursor.fetchone()
     
     async def fetchall(self, query: str, params: tuple = ()) -> list:
-        """Получить все записи."""
+        """Получить все записи (чтение параллельное)."""
         async with aiosqlite.connect(self.db_path) as db:
+            await self._init_connection(db)
             cursor = await db.execute(query, params)
             return await cursor.fetchall()
     

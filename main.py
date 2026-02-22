@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import sys
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
@@ -9,6 +11,30 @@ from db_utils import init_db, get_user_role, setup_initial_users, get_ban_status
 from admin_module import register_handlers, mentor_kb, admin_kb, user_kb, mock_kb, search_handler, IsAuthorizedUser, check_rate_limit
 
 logging.basicConfig(level=logging.INFO)
+
+# Защита от двойного запуска
+PID_FILE = "/tmp/sabot_bot.pid"
+
+def check_single_instance():
+    """Проверяем что бот не запущен дважды."""
+    if os.path.exists(PID_FILE):
+        with open(PID_FILE, 'r') as f:
+            old_pid = f.read().strip()
+            if old_pid and os.path.exists(f"/proc/{old_pid}"):
+                logging.error(f"Бот уже запущен (PID: {old_pid})")
+                sys.exit(1)
+    
+    # Записываем текущий PID
+    with open(PID_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+
+def remove_pid_file():
+    """Удаляем PID файл при выходе."""
+    try:
+        if os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
+    except:
+        pass
 
 
 async def start_handler(message: Message):
@@ -185,12 +211,26 @@ async def periodic_cleanup():
 
 
 async def main():
+    # Проверяем что бот не запущен дважды
+    check_single_instance()
+    
     # Инициализация БД
     await init_db(DB_NAME)
     await setup_initial_users(DB_NAME)
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
+    
+    # Graceful shutdown handling
+    shutdown_event = asyncio.Event()
+    
+    def signal_handler(signum, frame):
+        logging.info(f"Получен сигнал {signum}, начинаем graceful shutdown...")
+        shutdown_event.set()
+    
+    import signal
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
     dp.message.register(start_handler, CommandStart())
     dp.message.register(help_handler, Command("help"))
@@ -205,15 +245,34 @@ async def main():
     logging.info("Бот запущен")
     
     try:
-        # Запускаем polling с таймаутами
-        await dp.start_polling(
-            bot,
-            skip_updates=True,
-            polling_timeout=30,  # Таймаут long-polling (сек)
-            timeout=30,          # Таймаут HTTP-запроса (сек)
-            relax=0.1,           # Пауза между запросами (сек)
-            error_sleep=5.0,     # Пауза при ошибке (сек)
+        # Запускаем polling с таймаутами и проверкой shutdown
+        polling_task = asyncio.create_task(
+            dp.start_polling(
+                bot,
+                skip_updates=True,
+                polling_timeout=30,
+                timeout=30,
+                relax=0.1,
+                error_sleep=5.0,
+            )
         )
+        
+        # Ждем либо окончания polling, либо сигнала shutdown
+        shutdown_task = asyncio.create_task(shutdown_event.wait())
+        
+        done, pending = await asyncio.wait(
+            [polling_task, shutdown_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        
+        # Если пришел сигнал shutdown - отменяем polling
+        if shutdown_task in done:
+            polling_task.cancel()
+            try:
+                await polling_task
+            except asyncio.CancelledError:
+                pass
+        
     except Exception as e:
         logging.error(f"Fatal error in polling: {e}", exc_info=True)
     finally:
@@ -223,6 +282,7 @@ async def main():
         except asyncio.CancelledError:
             pass
         await bot.session.close()
+        remove_pid_file()
 
 
 if __name__ == "__main__":
