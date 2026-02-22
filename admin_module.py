@@ -153,14 +153,13 @@ async def check_role(message: Message, role: str) -> bool:
     return False
 
 
-class IsMentor:
+class HasRole:
+    """Универсальный фильтр проверки роли."""
+    def __init__(self, role: str):
+        self.role = role
+    
     async def __call__(self, message: Message) -> bool:
-        return await check_role(message, ROLE_MENTOR)
-
-
-class IsAdmin:
-    async def __call__(self, message: Message) -> bool:
-        return await check_role(message, ROLE_ADMIN)
+        return await check_role(message, self.role)
 
 
 # ==================== ХЕЛПЕРЫ ====================
@@ -216,18 +215,26 @@ def escape_md(text: str) -> str:
     return text
 
 
+def _format_entity(entity: dict, template: str, fields: dict) -> str:
+    """Универсальное форматирование сущности."""
+    data = {}
+    for key, value in fields.items():
+        if callable(value):
+            data[key] = value(entity)
+        else:
+            data[key] = entity.get(value, "")
+    return template.format(**data)
+
+
 def format_material(mat: dict) -> str:
-    title = escape_md(mat['title'])
-    link = mat['link']  # URL не экранируем
     desc = f"\n   📝 {escape_md(mat['description'][:50])}..." if mat.get('description') else ""
-    return f"🔹 *ID:{mat['id']}* [{title}]({link}){desc}"
+    return f"🔹 *ID:{mat['id']}* [{escape_md(mat['title'])}]({mat['link']}){desc}"
 
 
 def format_event(ev: dict) -> str:
     status = "✅" if ev['datetime'] > datetime.now().isoformat() else "⏰"
-    event_type = escape_md(ev['type'])
     link = f"[🔗]({ev['link']})" if ev['link'] else ""
-    return f"{status} *ID:{ev['id']}* {event_type} ({ev['datetime'][:10]}) {link}"
+    return f"{status} *ID:{ev['id']}* {escape_md(ev['type'])} ({ev['datetime'][:10]}) {link}"
 
 
 def format_user(user: dict) -> str:
@@ -334,18 +341,36 @@ async def material_select_stage(message: Message, state: FSMContext):
     await message.answer("Выберите раздел:", reply_markup=stage_kb)
 
 
+# Action handlers registry
+_STAGE_ACTIONS = {
+    "show_list": {
+        "format": lambda m, s=None: format_material(m),
+        "menu_after": "materials",
+        "empty_msg": "Пусто.",
+        "header": lambda stage, count: f"📚 *{STAGES[stage]}* ({count})\n\n",
+    },
+    "public_show": {
+        "format": lambda m, s=None: f"• [{m['title']}]({m['link']})",
+        "menu_after": None,
+        "empty_msg": "Пока пусто.",
+        "header": lambda stage, count: f"📚 *{STAGES[stage]}*\n\n",
+    },
+}
+
+_SELECT_ACTIONS = {
+    "select_for_edit": {"prefix": "", "action": "edit"},
+    "select_for_delete": {"prefix": "🗑️ ", "action": "del"},
+}
+
 async def handle_stage_selection(message: Message, state: FSMContext):
     """Универсальный обработчик выбора stage."""
     stage = get_stage_key(message.text)
-    
-    # Если текст не является названием stage - игнорируем (другие обработчики сработают)
     if not stage:
         return
     
     data = await state.get_data()
     next_action = data.get("next_action")
     
-    # Если next_action не установлен - сбрасываем состояние и просим начать сначала
     if not next_action:
         await state.clear()
         await message.answer(
@@ -354,56 +379,53 @@ async def handle_stage_selection(message: Message, state: FSMContext):
         )
         return
     
-    if next_action == "show_list":
+    # Обработка list/show действий
+    if next_action in _STAGE_ACTIONS:
+        cfg = _STAGE_ACTIONS[next_action]
         mats = await get_materials(stage)
         stage_name = STAGES[stage]
+        
         if not mats:
-            text = f"📭 *{stage_name}*\n\nПусто."
+            text = f"📭 *{stage_name}*\n\n{cfg['empty_msg']}"
         else:
-            text = f"📚 *{stage_name}* ({len(mats)})\n\n" + "\n".join(format_material(m) for m in mats)
+            lines = [cfg['format'](m) for m in mats]
+            text = cfg['header'](stage, len(mats)) + "\n".join(lines)
+        
         await message.answer(text, parse_mode="Markdown", disable_web_page_preview=True)
-        await materials_menu(message, state)
+        
+        if cfg['menu_after'] == "materials":
+            await materials_menu(message, state)
+        else:
+            await state.clear()
+        return
     
-    elif next_action == "add_material":
+    # Обработка add_material
+    if next_action == "add_material":
         await state.update_data(stage=stage)
         await state.set_state(Form.input_title)
         await message.answer("Введите название:", reply_markup=back_kb)
+        return
     
-    elif next_action == "select_for_edit":
+    # Обработка select_for_edit / select_for_delete (оба используют одну логику)
+    if next_action in _SELECT_ACTIONS:
+        cfg = _SELECT_ACTIONS[next_action]
         mats = await get_materials(stage)
         if not mats:
             await message.answer("📭 Пусто", reply_markup=stage_kb)
             return
+        
         await state.update_data(stage=stage)
         await state.set_state(Form.selecting_item)
+        
         kb = inline_kb([
-            [InlineKeyboardButton(text=f"{m['id']}. {m['title'][:30]}", callback_data=f"edit_mat:{m['id']}")]
-            for m in mats
+            [InlineKeyboardButton(
+                text=f"{cfg['prefix']}{m['id']}. {m['title'][:30]}", 
+                callback_data=f"{cfg['action']}_mat:{m['id']}"
+            )] for m in mats
         ])
-        await message.answer("Выберите материал:", reply_markup=kb)
-    
-    elif next_action == "select_for_delete":
-        mats = await get_materials(stage)
-        if not mats:
-            await message.answer("📭 Пусто", reply_markup=stage_kb)
-            return
-        await state.update_data(stage=stage)
-        await state.set_state(Form.selecting_item)
-        kb = inline_kb([
-            [InlineKeyboardButton(text=f"🗑️ {m['id']}. {m['title'][:30]}", callback_data=f"del_mat:{m['id']}")]
-            for m in mats
-        ])
-        await message.answer("Выберите для удаления:", reply_markup=kb)
-    
-    elif next_action == "public_show":
-        mats = await get_materials(stage)
-        stage_name = STAGES[stage]
-        if not mats:
-            text = f"📭 *{stage_name}*\n\nПока пусто."
-        else:
-            text = f"📚 *{stage_name}*\n\n" + "\n".join(f"• [{m['title']}]({m['link']})" for m in mats)
-        await message.answer(text, parse_mode="Markdown", disable_web_page_preview=True)
-        await state.clear()
+        
+        label = "Выберите материал:" if next_action == "select_for_edit" else "Выберите для удаления:"
+        await message.answer(label, reply_markup=kb)
 
 
 # --- Добавление материалов ---
@@ -454,25 +476,48 @@ async def material_edit_select_stage(message: Message, state: FSMContext):
     await message.answer("✏️ Выберите раздел:", reply_markup=stage_kb)
 
 
-async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
+async def _handle_item_callback(
+    callback: CallbackQuery, 
+    state: FSMContext,
+    getter_func,
+    state_to_set: State,
+    edit_template: str,
+    item_name_key: str = "title"
+):
+    """Универсальный обработчик callback для выбора элемента."""
     await callback.answer()
     try:
-        mat_id = int(callback.data.split(":")[1])
+        item_id = int(callback.data.split(":")[1])
     except (ValueError, IndexError):
         await callback.message.edit_text("❌ Некорректные данные")
         return
-    mat = await get_material(mat_id)
-    if not mat:
+    
+    item = await getter_func(item_id)
+    if not item:
         await callback.message.edit_text("❌ Не найдено")
         return
-    await state.update_data(edit_id=mat_id, edit_mat=mat)
-    await state.set_state(Form.editing_field)
+    
+    await state.update_data(edit_id=item_id, edit_item=item)
+    await state.set_state(state_to_set)
+    
+    name = item.get(item_name_key, str(item_id))
     await callback.message.edit_text(
-        f"✏️ Редактирование *{mat['title']}*\n\n"
-        f"Отправьте новые данные в формате:\n"
-        f"`название\n\nссылка\n\nописание`\n\n"
-        f"Используйте '.' для пропуска поля",
+        edit_template.format(name=name),
         parse_mode="Markdown"
+    )
+
+
+async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
+    await _handle_item_callback(
+        callback, state,
+        getter_func=get_material,
+        state_to_set=Form.editing_field,
+        edit_template=(
+            "✏️ Редактирование *{name}*\n\n"
+            "Отправьте новые данные в формате:\n"
+            "`название\n\nссылка\n\nописание`\n\n"
+            "Используйте '.' для пропуска поля"
+        )
     )
 
 
@@ -1090,45 +1135,45 @@ def register_handlers(dp):
     dp.message.register(buddy_handler, F.text.in_(["🤝 Buddy", "Buddy"]), IsAuthorizedUser())
     
     # Материалы
-    dp.message.register(materials_menu, F.text == "📦 Управление материалами", IsAdmin())
-    dp.message.register(material_select_stage, F.text == "📖 Просмотреть", IsAdmin())
-    dp.message.register(material_add_start, F.text == "➕ Добавить", IsAdmin())
-    dp.message.register(material_add_title, Form.input_title, IsAdmin())
-    dp.message.register(material_add_link, Form.input_link, IsAdmin())
-    dp.message.register(material_add_desc, Form.input_desc, IsAdmin())
-    dp.message.register(material_edit_select_stage, F.text == "✏️ Редактировать", IsAdmin())
-    dp.callback_query.register(material_edit_callback, F.data.startswith("edit_mat:"), IsAdmin())
-    dp.message.register(material_edit_process, Form.editing_field, IsAdmin())
-    dp.message.register(material_delete_select_stage, F.text == "🗑️ Удалить", IsAdmin())
-    dp.callback_query.register(material_delete_callback, F.data.startswith("del_mat:"), IsAdmin())
-    dp.message.register(material_stats, F.text == "📊 Статистика", IsAdmin())
+    dp.message.register(materials_menu, F.text == "📦 Управление материалами", HasRole(ROLE_ADMIN))
+    dp.message.register(material_select_stage, F.text == "📖 Просмотреть", HasRole(ROLE_ADMIN))
+    dp.message.register(material_add_start, F.text == "➕ Добавить", HasRole(ROLE_ADMIN))
+    dp.message.register(material_add_title, Form.input_title, HasRole(ROLE_ADMIN))
+    dp.message.register(material_add_link, Form.input_link, HasRole(ROLE_ADMIN))
+    dp.message.register(material_add_desc, Form.input_desc, HasRole(ROLE_ADMIN))
+    dp.message.register(material_edit_select_stage, F.text == "✏️ Редактировать", HasRole(ROLE_ADMIN))
+    dp.callback_query.register(material_edit_callback, F.data.startswith("edit_mat:"), HasRole(ROLE_ADMIN))
+    dp.message.register(material_edit_process, Form.editing_field, HasRole(ROLE_ADMIN))
+    dp.message.register(material_delete_select_stage, F.text == "🗑️ Удалить", HasRole(ROLE_ADMIN))
+    dp.callback_query.register(material_delete_callback, F.data.startswith("del_mat:"), HasRole(ROLE_ADMIN))
+    dp.message.register(material_stats, F.text == "📊 Статистика", HasRole(ROLE_ADMIN))
     
     # События (используем Form.menu_events для разделения с материалами)
-    dp.message.register(events_menu, F.text == "📋 Управление событиями", IsAdmin())
-    dp.message.register(events_show_all, F.text == "📖 Просмотреть", Form.menu_events, IsAdmin())
-    dp.message.register(event_add_start, F.text == "➕ Добавить", Form.menu_events, IsAdmin())
-    dp.message.register(event_add_type, Form.input_type, IsAdmin())
-    dp.message.register(event_add_datetime, Form.input_datetime, IsAdmin())
-    dp.message.register(event_add_link, Form.input_link, IsAdmin())
-    dp.message.register(event_add_announcement, Form.input_announcement, IsAdmin())
-    dp.message.register(event_edit_select, F.text == "✏️ Редактировать", Form.menu_events, IsAdmin())
-    dp.callback_query.register(event_edit_callback, F.data.startswith("edit_ev:"), IsAdmin())
-    dp.message.register(event_edit_process, Form.editing_field, IsAdmin())
-    dp.message.register(event_delete_select, F.text == "🗑️ Удалить", Form.menu_events, IsAdmin())
-    dp.callback_query.register(event_delete_callback, F.data.startswith("del_ev:"), IsAdmin())
+    dp.message.register(events_menu, F.text == "📋 Управление событиями", HasRole(ROLE_ADMIN))
+    dp.message.register(events_show_all, F.text == "📖 Просмотреть", Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.message.register(event_add_start, F.text == "➕ Добавить", Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.message.register(event_add_type, Form.input_type, HasRole(ROLE_ADMIN))
+    dp.message.register(event_add_datetime, Form.input_datetime, HasRole(ROLE_ADMIN))
+    dp.message.register(event_add_link, Form.input_link, HasRole(ROLE_ADMIN))
+    dp.message.register(event_add_announcement, Form.input_announcement, HasRole(ROLE_ADMIN))
+    dp.message.register(event_edit_select, F.text == "✏️ Редактировать", Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.callback_query.register(event_edit_callback, F.data.startswith("edit_ev:"), HasRole(ROLE_ADMIN))
+    dp.message.register(event_edit_process, Form.editing_field, HasRole(ROLE_ADMIN))
+    dp.message.register(event_delete_select, F.text == "🗑️ Удалить", Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.callback_query.register(event_delete_callback, F.data.startswith("del_ev:"), HasRole(ROLE_ADMIN))
     
     # Роли (новая система)
-    dp.message.register(roles_menu, F.text == "👥 Управление ролями", IsAdmin())
-    dp.message.register(roles_show, F.text == "📋 Список пользователей", IsAdmin())
-    dp.message.register(role_add_start, F.text == "➕ Назначить роль", IsAdmin())
-    dp.message.register(role_receive_users, Form.input_users, IsAdmin())
-    dp.callback_query.register(role_set_callback, F.data.startswith("set_role:"), IsAdmin())
-    dp.message.register(role_delete_start, F.text == "🗑️ Удалить пользователя", IsAdmin())
-    dp.callback_query.register(role_delete_callback, F.data.startswith("del_user:"), IsAdmin())
+    dp.message.register(roles_menu, F.text == "👥 Управление ролями", HasRole(ROLE_ADMIN))
+    dp.message.register(roles_show, F.text == "📋 Список пользователей", HasRole(ROLE_ADMIN))
+    dp.message.register(role_add_start, F.text == "➕ Назначить роль", HasRole(ROLE_ADMIN))
+    dp.message.register(role_receive_users, Form.input_users, HasRole(ROLE_ADMIN))
+    dp.callback_query.register(role_set_callback, F.data.startswith("set_role:"), HasRole(ROLE_ADMIN))
+    dp.message.register(role_delete_start, F.text == "🗑️ Удалить пользователя", HasRole(ROLE_ADMIN))
+    dp.callback_query.register(role_delete_callback, F.data.startswith("del_user:"), HasRole(ROLE_ADMIN))
 
     # Баны
-    dp.message.register(bans_menu, F.text == "🚫 Управление банами", IsAdmin())
-    dp.callback_query.register(ban_unban_callback, F.data.startswith("unban:"), IsAdmin())
+    dp.message.register(bans_menu, F.text == "🚫 Управление банами", HasRole(ROLE_ADMIN))
+    dp.callback_query.register(ban_unban_callback, F.data.startswith("unban:"), HasRole(ROLE_ADMIN))
     
     # Fallback handler - ловит все неизвестные сообщения от авторизованных пользователей
     dp.message.register(fallback_handler, IsAuthorizedUser())
