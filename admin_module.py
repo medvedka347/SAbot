@@ -21,28 +21,47 @@ from db_utils import (
 
 # ==================== RATE LIMITING ====================
 
-# In-memory хранилище для rate limiting: {user_id: timestamp}
+# In-memory хранилище для rate limiting: {user_id: [timestamps]}
 _rate_limits = {}
-RATE_LIMIT_SECONDS = 1  # Минимальный интервал между командами
+RATE_LIMIT_WINDOW = 5.0  # Окно в секундах
+RATE_LIMIT_MAX_REQUESTS = 8  # Макс запросов за окно
+RATE_LIMIT_MIN_GAP = 0.3  # Минимальный gap между запросами (300ms)
 
 def check_rate_limit(user_id: int) -> tuple[bool, int]:
-    """Проверка rate limit. 
+    """Проверка rate limit с burst-режимом.
+    Разрешает быстро нажимать кнопки, но ограничивает флуд.
     Returns: (можно_обрабатывать, секунд_до_следующего_запроса)
     """
     from time import time
     now = time()
-    last_request = _rate_limits.get(user_id, 0)
     
-    if now - last_request < RATE_LIMIT_SECONDS:
-        wait = int(RATE_LIMIT_SECONDS - (now - last_request))
+    if user_id not in _rate_limits:
+        _rate_limits[user_id] = []
+    
+    # Очищаем старые записи (старше окна)
+    _rate_limits[user_id] = [t for t in _rate_limits[user_id] if now - t < RATE_LIMIT_WINDOW]
+    
+    # Проверяем минимальный gap с последним запросом
+    if _rate_limits[user_id]:
+        last_request = _rate_limits[user_id][-1]
+        gap = now - last_request
+        if gap < RATE_LIMIT_MIN_GAP:
+            wait = int(RATE_LIMIT_MIN_GAP - gap) + 1
+            return False, wait
+    
+    # Проверяем количество запросов за окно
+    if len(_rate_limits[user_id]) >= RATE_LIMIT_MAX_REQUESTS:
+        oldest = _rate_limits[user_id][0]
+        wait = int(RATE_LIMIT_WINDOW - (now - oldest)) + 1
         return False, wait
     
-    _rate_limits[user_id] = now
+    # Регистрируем запрос
+    _rate_limits[user_id].append(now)
     
-    # Periodic cleanup every 1000 requests (approx)
+    # Periodic cleanup
     if len(_rate_limits) > 10000:
-        cutoff = now - 3600  # Keep only last hour
-        old_keys = [k for k, v in _rate_limits.items() if v < cutoff]
+        cutoff = now - 3600
+        old_keys = [k for k, v in _rate_limits.items() if not v or v[-1] < cutoff]
         for k in old_keys:
             del _rate_limits[k]
     
@@ -325,6 +344,15 @@ async def handle_stage_selection(message: Message, state: FSMContext):
     
     data = await state.get_data()
     next_action = data.get("next_action")
+    
+    # Если next_action не установлен - сбрасываем состояние и просим начать сначала
+    if not next_action:
+        await state.clear()
+        await message.answer(
+            "⚠️ Сессия устарела. Пожалуйста, начните сначала.",
+            reply_markup=await get_main_keyboard(message.from_user.id)
+        )
+        return
     
     if next_action == "show_list":
         mats = await get_materials(stage)
@@ -1004,6 +1032,33 @@ async def search_handler(message: Message):
     await message.answer("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
 
 
+async def get_main_keyboard(user_id: int):
+    """Получить правильную клавиатуру для пользователя по его роли."""
+    role = await get_user_role(user_id=user_id)
+    if role == ROLE_ADMIN:
+        return admin_kb
+    elif role == ROLE_MENTOR:
+        return mentor_kb
+    else:
+        return user_kb
+
+
+async def fallback_handler(message: Message, state: FSMContext):
+    """Fallback handler - ловит все неизвестные сообщения от авторизованных пользователей."""
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        return  # Тихо игнорируем если rate limit
+    
+    # Сбрасываем состояние
+    await state.clear()
+    
+    # Отправляем подсказку
+    await message.answer(
+        "❓ Не понял команду. Используйте кнопки меню или /start",
+        reply_markup=await get_main_keyboard(message.from_user.id)
+    )
+
+
 async def error_handler(event, exception):
     """Global error handler to prevent bot from crashing."""
     logging.error(f"Error occurred: {exception}", exc_info=True)
@@ -1074,6 +1129,9 @@ def register_handlers(dp):
     # Баны
     dp.message.register(bans_menu, F.text == "🚫 Управление банами", IsAdmin())
     dp.callback_query.register(ban_unban_callback, F.data.startswith("unban:"), IsAdmin())
+    
+    # Fallback handler - ловит все неизвестные сообщения от авторизованных пользователей
+    dp.message.register(fallback_handler, IsAuthorizedUser())
     
     # Global error handler
     dp.errors.register(error_handler)
