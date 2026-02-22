@@ -104,73 +104,70 @@ class Database:
         
         # Создание индексов
         with self._connect() as conn:
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON user_roles(user_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_username ON user_roles(username)")
+            # На user_roles индексы не нужны - есть UNIQUE ограничения
             conn.execute("CREATE INDEX IF NOT EXISTS idx_bans_user ON bans(user_id, username)")
         
         logging.info(f"База данных '{self.db_path}' готова")
     
     def _migrate_user_roles(self):
-        """Миграция: добавление поля username."""
+        """Миграция: создание таблицы с правильными UNIQUE ограничениями."""
         with self._connect() as conn:
             # Проверяем, существует ли таблица
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_roles'")
             if not cursor.fetchone():
-                # Таблицы нет - создаем новую сразу с правильной схемой
+                # Таблицы нет - создаем новую с правильной схемой
                 conn.execute("""
                     CREATE TABLE user_roles (
-                        user_id INTEGER,
-                        username TEXT,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER UNIQUE,
+                        username TEXT UNIQUE,
                         role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
                         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                        PRIMARY KEY (user_id, username),
                         CHECK (user_id IS NOT NULL OR username IS NOT NULL)
                     )
                 """)
-                logging.info("Создана таблица user_roles с полем username")
+                logging.info("Создана таблица user_roles")
                 return
             
-            # Таблица существует - проверяем наличие колонки username
-            try:
-                conn.execute("SELECT username FROM user_roles LIMIT 1")
-                # Если дошли сюда - колонка есть
+            # Проверяем текущую схему таблицы
+            cursor = conn.execute("PRAGMA table_info(user_roles)")
+            columns = {row[1]: row for row in cursor.fetchall()}
+            
+            # Если есть колонка 'id' - значит новая схема, ничего не делаем
+            if 'id' in columns:
                 return
-            except sqlite3.OperationalError:
-                # Колонки нет - нужна миграция
-                logging.warning("Миграция: добавление поля username")
-                # Проверяем какие колонки есть в старой таблице
-                cursor = conn.execute("PRAGMA table_info(user_roles)")
-                columns = [row[1] for row in cursor.fetchall()]
+            
+            # Старая схема с составным PRIMARY KEY - нужна миграция
+            logging.warning("Миграция: исправление структуры user_roles")
+            
+            conn.executescript("""
+                DROP TABLE IF EXISTS user_roles_new;
                 
-                # Удаляем временную таблицу если осталась с прошлого раза
-                conn.execute("DROP TABLE IF EXISTS user_roles_new")
-                
-                conn.executescript("""
-                    CREATE TABLE user_roles_new (
-                        user_id INTEGER,
-                        username TEXT,
-                        role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
-                        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                        PRIMARY KEY (user_id, username),
-                        CHECK (user_id IS NOT NULL OR username IS NOT NULL)
-                    );
+                CREATE TABLE user_roles_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER UNIQUE,
+                    username TEXT UNIQUE,
+                    role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    CHECK (user_id IS NOT NULL OR username IS NOT NULL)
+                );
+            """)
+            
+            # Переносим данные
+            if 'created_at' in columns:
+                conn.execute("""
+                    INSERT INTO user_roles_new (user_id, username, role, created_at)
+                    SELECT user_id, username, role, created_at FROM user_roles
                 """)
-                
-                # Формируем запрос вставки в зависимости от наличия колонок
-                if 'created_at' in columns:
-                    conn.execute("""
-                        INSERT INTO user_roles_new (user_id, username, role, created_at)
-                        SELECT user_id, NULL, role, created_at FROM user_roles
-                    """)
-                else:
-                    conn.execute("""
-                        INSERT INTO user_roles_new (user_id, username, role, created_at)
-                        SELECT user_id, NULL, role, CURRENT_TIMESTAMP FROM user_roles
-                    """)
-                
-                conn.execute("DROP TABLE user_roles")
-                conn.execute("ALTER TABLE user_roles_new RENAME TO user_roles")
-                logging.info("Миграция user_roles выполнена")
+            else:
+                conn.execute("""
+                    INSERT INTO user_roles_new (user_id, username, role, created_at)
+                    SELECT user_id, username, role, CURRENT_TIMESTAMP FROM user_roles
+                """)
+            
+            conn.execute("DROP TABLE user_roles")
+            conn.execute("ALTER TABLE user_roles_new RENAME TO user_roles")
+            logging.info("Миграция user_roles выполнена")
     
     def _migrate_materials(self):
         """Миграция: добавление поля stage."""
@@ -297,45 +294,70 @@ def add_or_update_user(user_id: int = None, username: str = None, role: str = No
     Добавить или обновить пользователя.
     Можно указать только user_id, только username, или оба.
     Если пользователь с таким user_id или username уже есть - обновит роль.
+    При совпадении по ID или username - объединяет данные.
     """
     if not user_id and not username:
         raise ValueError("Нужно указать user_id или username")
     
     username = normalize_username(username)
     
-    # Проверяем, есть ли уже такой пользователь
-    existing = None
-    if user_id:
-        existing = get_user_by_id(user_id)
-    if not existing and username:
-        existing = get_user_by_username(username)
+    # Ищем существующую запись по ID или username
+    existing_by_id = get_user_by_id(user_id) if user_id else None
+    existing_by_username = get_user_by_username(username) if username else None
     
-    if existing:
-        # Обновляем существующую запись
-        # Если пришел новый user_id для существующего username (или наоборот) - объединяем
-        new_user_id = user_id or existing["user_id"]
-        new_username = username or existing["username"]
-        
-        # Удаляем старую запись
-        db.execute(
-            "DELETE FROM user_roles WHERE user_id = ? OR username = ?",
-            (existing["user_id"], existing["username"])
-        )
-        
-        # Вставляем обновленную
-        db.execute(
-            "INSERT INTO user_roles (user_id, username, role) VALUES (?, ?, ?)",
-            (new_user_id, new_username, role)
-        )
-        logging.info(f"Обновлен пользователь: id={new_user_id}, @{new_username} -> {role}")
-    else:
-        # Новый пользователь
-        db.execute(
-            "INSERT INTO user_roles (user_id, username, role) VALUES (?, ?, ?)",
-            (user_id, username, role)
-        )
-        logging.info(f"Добавлен пользователь: id={user_id}, @{username} -> {role}")
+    # Определяем итоговые значения
+    final_user_id = user_id
+    final_username = username
     
+    # Если нашли по ID - берем username оттуда если наш не указан
+    if existing_by_id:
+        if not final_username and existing_by_id.get("username"):
+            final_username = existing_by_id["username"]
+    
+    # Если нашли по username - берем ID оттуда если наш не указан
+    if existing_by_username:
+        if not final_user_id and existing_by_username.get("user_id"):
+            final_user_id = existing_by_username["user_id"]
+    
+    # Удаляем все старые записи которые конфликтуют
+    ids_to_delete = set()
+    if existing_by_id:
+        ids_to_delete.add(existing_by_id.get("user_id"))
+    if existing_by_username:
+        ids_to_delete.add(existing_by_username.get("user_id"))
+    
+    for uid in ids_to_delete:
+        if uid is not None:
+            db.execute("DELETE FROM user_roles WHERE user_id = ?", (uid,))
+    
+    # Удаляем по username тоже (на случай если есть запись только с username)
+    if existing_by_username and existing_by_username.get("username"):
+        db.execute("DELETE FROM user_roles WHERE username = ?", (existing_by_username["username"],))
+    if existing_by_id and existing_by_id.get("username") and existing_by_id.get("username") != final_username:
+        db.execute("DELETE FROM user_roles WHERE username = ?", (existing_by_id["username"],))
+    
+    # Вставляем новую запись (или обновляем через UPSERT)
+    try:
+        db.execute(
+            """
+            INSERT INTO user_roles (user_id, username, role) 
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET 
+                username = excluded.username,
+                role = excluded.role
+            """,
+            (final_user_id, final_username, role)
+        )
+    except sqlite3.IntegrityError:
+        # Конфликт по username - обновляем существующую запись с этим username
+        if final_username:
+            db.execute(
+                "UPDATE user_roles SET user_id = ?, role = ? WHERE username = ?",
+                (final_user_id, role, final_username)
+            )
+    
+    action = "Обновлен" if (existing_by_id or existing_by_username) else "Добавлен"
+    logging.info(f"{action} пользователь: id={final_user_id}, @{final_username} -> {role}")
     return True
 
 
@@ -355,7 +377,7 @@ def set_users_batch(users: list[dict], role: str):
 
 def delete_user(user_id: int = None, username: str = None) -> bool:
     """Удалить пользователя по ID или username."""
-    if user_id:
+    if user_id is not None:
         deleted = db.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
         if deleted > 0:
             return True

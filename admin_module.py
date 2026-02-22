@@ -235,25 +235,24 @@ def parse_users_input(text: str) -> tuple[list[dict], list[str]]:
         
         # Проверяем, является ли часть @username
         if part.startswith('@'):
-            if current_user:
+            normalized = normalize_username(part)
+            if not normalized:
+                errors.append(part)
+                continue
+            # Если текущий пользователь уже имеет username - сохраняем и начинаем нового
+            if current_user.get("username"):
                 users.append(current_user)
                 current_user = {}
-            current_user["username"] = part
+            current_user["username"] = normalized
         # Проверяем, является ли часть ID (с валидацией)
         elif part.isdigit():
             validated_id = validate_user_id(int(part))
             if validated_id:
-                if current_user and "user_id" not in current_user:
-                    # Если уже есть username без ID - добавляем ID к нему
-                    current_user["user_id"] = validated_id
+                # Если текущий пользователь уже имеет user_id - сохраняем и начинаем нового
+                if current_user.get("user_id"):
                     users.append(current_user)
                     current_user = {}
-                elif current_user and "user_id" in current_user:
-                    # Если уже есть ID - сохраняем текущего и начинаем нового
-                    users.append(current_user)
-                    current_user = {"user_id": validated_id}
-                else:
-                    current_user["user_id"] = validated_id
+                current_user["user_id"] = validated_id
             else:
                 errors.append(f"{part} (невалидный ID)")
         else:
@@ -797,8 +796,13 @@ async def role_delete_start(message: Message, state: FSMContext):
             keyboard.append([InlineKeyboardButton(text=f"—— {role.upper()} ——", callback_data="noop")])
             for u in by_role[role][:10]:  # Ограничиваем для компактности
                 user_text = format_user(u)
-                # Создаем callback с user_id или username
-                callback_data = f"del_user:{u.get('user_id') or u.get('username')}"
+                # Создаем callback с user_id или username (НЕ может быть None)
+                if u.get('user_id'):
+                    callback_data = f"del_user:id:{u['user_id']}"
+                elif u.get('username'):
+                    callback_data = f"del_user:un:{u['username']}"
+                else:
+                    continue  # Пропускаем пользователей без ID и username
                 keyboard.append([InlineKeyboardButton(text=user_text, callback_data=callback_data)])
     
     await message.answer("🗑️ Выберите пользователя для удаления:", reply_markup=inline_kb(keyboard))
@@ -811,13 +815,19 @@ async def role_delete_callback(callback: CallbackQuery, state: FSMContext):
     if callback.data == "noop":
         return
     
-    user_key = callback.data.split(":", 1)[1]
+    # Формат: del_user:id:123456789 или del_user:un:username
+    parts = callback.data.split(":")
+    if len(parts) < 3:
+        await callback.message.edit_text("❌ Некорректные данные")
+        return
     
-    # Определяем, это ID или username
-    if user_key.isdigit():
-        success = delete_user(user_id=int(user_key))
-    else:
-        success = delete_user(username=user_key)
+    key_type = parts[1]
+    key_value = parts[2]
+    
+    if key_type == "id":
+        success = delete_user(user_id=int(key_value))
+    else:  # key_type == "un"
+        success = delete_user(username=key_value)
     
     if success:
         await callback.message.edit_text(f"✅ Пользователь удалён")
