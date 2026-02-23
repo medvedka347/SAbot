@@ -421,7 +421,9 @@ async def handle_stage_selection(message: Message, state: FSMContext):
         if cfg['menu_after'] == "materials":
             await materials_menu(message, state)
         else:
-            await state.clear()
+            # Для public_show не очищаем state, оставляем возможность переключаться между разделами
+            await state.set_state(Form.selecting_stage)
+            await state.update_data(next_action="public_show")
         return
     
     # Обработка add_material
