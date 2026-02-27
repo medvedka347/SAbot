@@ -1502,6 +1502,13 @@ async def group_material_handler(message: Message):
         return
     
     query = parts[1].strip()
+    # Убираем угловые скобки и кавычки если пользователь скопировал из примера
+    for char in ['<', '>', '"', "'"]:
+        query = query.replace(char, '')
+    query = query.strip()
+    if not query:
+        await message.reply("❌ Укажите ключевое слово для поиска")
+        return
     # Поиск только по названию материала
     results = await search_materials_by_title(query)
     
