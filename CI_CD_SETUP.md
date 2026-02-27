@@ -243,3 +243,54 @@ source .venv/bin/activate
 pip install -r requirements.txt
 systemctl restart sabot
 ```
+
+---
+
+## 🔄 Автообновление на сервере (без GitHub Actions)
+
+Если нет возможности настроить GitHub Actions, бот может сам следить за обновлениями:
+
+### Быстрая настройка
+
+```bash
+curl -sSL https://raw.githubusercontent.com/medvedka347/SAbot/main/deploy/setup-auto-update.sh | bash
+```
+
+### Ручная настройка
+
+```bash
+# Скопировать systemd файлы
+cp deploy/sabot-auto-update.service /etc/systemd/system/
+cp deploy/sabot-auto-update.timer /etc/systemd/system/
+
+# Сделать скрипт исполняемым
+chmod +x /root/SABot/deploy/auto-update.sh
+
+# Запустить
+systemctl daemon-reload
+systemctl enable sabot-auto-update.timer
+systemctl start sabot-auto-update.timer
+```
+
+### Как это работает
+
+- Проверка новых коммитов каждые **5 минут**
+- Если есть изменения: `git pull` → установка зависимостей → рестарт сервиса
+- Логи: `/var/log/sabot-auto-update.log`
+
+### Управление
+
+```bash
+# Статус таймера
+systemctl status sabot-auto-update.timer
+
+# Последняя проверка
+journalctl -u sabot-auto-update -n 20
+
+# Логи автообновлений
+tail -f /var/log/sabot-auto-update.log
+
+# Остановить автообновление
+systemctl stop sabot-auto-update.timer
+systemctl disable sabot-auto-update.timer
+```

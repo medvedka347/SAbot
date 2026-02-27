@@ -214,6 +214,9 @@ def get_stage_key(text: str) -> str | None:
     return None
 
 
+USERS_PER_PAGE = 25  # Пагинация для списка пользователей
+
+
 def get_role_emoji(role: str) -> str:
     return {"admin": "👑", "mentor": "🎓", "user": "👤"}.get(role, "❓")
 
@@ -832,8 +835,24 @@ async def roles_menu(message: Message, state: FSMContext):
     await message.answer(text, parse_mode="Markdown", reply_markup=roles_menu_kb)
 
 
+def build_users_pagination_keyboard(page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Создать клавиатуру пагинации для списка пользователей."""
+    buttons = []
+    
+    # Кнопки навигации
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"users_page:{page-1}"))
+    nav_row.append(InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"users_page:{page+1}"))
+    
+    buttons.append(nav_row)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 async def roles_show(message: Message, state: FSMContext):
-    """Показать список всех пользователей."""
+    """Показать список всех пользователей (с пагинацией)."""
     users = await get_all_users()
     if not users:
         await message.answer("📭 Пользователей нет")
@@ -845,18 +864,79 @@ async def roles_show(message: Message, state: FSMContext):
     for u in users:
         by_role[u['role']].append(u)
     
-    lines = [f"👥 *Всего пользователей: {len(users)}*\n"]
+    # Плоский список всех пользователей для пагинации
+    all_users_flat = []
+    for role in ROLES:
+        for u in by_role[role]:
+            all_users_flat.append(u)
+    
+    total_users = len(all_users_flat)
+    total_pages = (total_users + USERS_PER_PAGE - 1) // USERS_PER_PAGE
+    
+    # Показываем первую страницу
+    await _show_users_page(message, all_users_flat, 0, total_pages, total_users, is_callback=False)
+    await roles_menu(message, state)
+
+
+async def _show_users_page(message_or_callback, users: list, page: int, total_pages: int, total_users: int, is_callback: bool = False):
+    """Отобразить страницу со списком пользователей."""
+    start_idx = page * USERS_PER_PAGE
+    end_idx = min(start_idx + USERS_PER_PAGE, len(users))
+    page_users = users[start_idx:end_idx]
+    
+    # Группируем по ролям для отображения
+    by_role = {r: [] for r in ROLES}
+    for u in page_users:
+        by_role[u['role']].append(u)
+    
+    lines = [f"👥 *Всего пользователей: {total_users}* (стр. {page+1}/{total_pages})\n"]
+    
     for role in ROLES:
         emoji = get_role_emoji(role)
-        lines.append(f"\n{emoji} *{role.capitalize()} ({len(by_role[role])}):*")
-        if by_role[role]:
-            for u in by_role[role]:
+        role_users = by_role[role]
+        lines.append(f"\n{emoji} *{role.capitalize()} ({len(role_users)} на этой стр.):*")
+        if role_users:
+            for u in role_users:
                 lines.append(f"  {format_user(u)}")
         else:
-            lines.append("  _пусто_")
+            lines.append("  _нет_")
     
-    await message.answer("\n".join(lines), parse_mode="Markdown")
-    await roles_menu(message, state)
+    keyboard = build_users_pagination_keyboard(page, total_pages)
+    text = "\n".join(lines)
+    
+    if is_callback:
+        # Редактируем существующее сообщение
+        try:
+            await message_or_callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
+        except Exception:
+            # Если текст не изменился, пропускаем
+            pass
+        await message_or_callback.answer()
+    else:
+        await message_or_callback.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+
+
+async def users_page_callback(callback: CallbackQuery):
+    """Callback для переключения страниц списка пользователей."""
+    page = int(callback.data.split(":")[1])
+    
+    # Получаем всех пользователей и считаем страницы
+    users = await get_all_users()
+    
+    # Группируем по ролям для того же порядка
+    by_role = {r: [] for r in ROLES}
+    for u in users:
+        by_role[u['role']].append(u)
+    
+    all_users_flat = []
+    for role in ROLES:
+        for u in by_role[role]:
+            all_users_flat.append(u)
+    
+    total_users = len(all_users_flat)
+    total_pages = (total_users + USERS_PER_PAGE - 1) // USERS_PER_PAGE
+    
+    await _show_users_page(callback, all_users_flat, page, total_pages, total_users, is_callback=True)
 
 
 # --- Назначение роли ---
@@ -1233,6 +1313,7 @@ def register_handlers(dp):
     # Роли (новая система)
     dp.message.register(roles_menu, F.text == "👥 Управление ролями", HasRole(ROLE_ADMIN))
     dp.message.register(roles_show, F.text == "📋 Список пользователей", HasRole(ROLE_ADMIN))
+    dp.callback_query.register(users_page_callback, F.data.startswith("users_page:"), HasRole(ROLE_ADMIN))
     dp.message.register(role_add_start, F.text == "➕ Назначить роль", HasRole(ROLE_ADMIN))
     dp.message.register(role_receive_users, Form.input_users, HasRole(ROLE_ADMIN))
     dp.callback_query.register(role_set_callback, F.data.startswith("set_role:"), HasRole(ROLE_ADMIN))
