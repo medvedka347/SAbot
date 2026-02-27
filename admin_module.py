@@ -410,6 +410,10 @@ def parse_users_input(text: str) -> tuple[list[dict], list[str]]:
 # ==================== ГЛАВНОЕ МЕНЮ ====================
 
 async def admin_handler(message: Message, state: FSMContext):
+    """Обработчик админки (не 'Назад')."""
+    if message.text != "⚙️ Админка":
+        return
+    
     # Проверяем rate limit
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
@@ -1263,6 +1267,20 @@ async def public_materials_select(message: Message, state: FSMContext):
     )
 
 
+async def back_handler(message: Message, state: FSMContext):
+    """Универсальный обработчик 'Назад' - возвращает в главное меню."""
+    if message.text not in ["🔙 Назад", "Назад"]:
+        return
+    
+    # Просто очищаем состояние и возвращаем в главное меню
+    await state.clear()
+    role = await get_user_role(user_id=message.from_user.id, username=message.from_user.username)
+    
+    welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
+    kb = await get_main_keyboard(message.from_user.id, message.chat.type)
+    await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
+
+
 async def public_events_show(message: Message):
     # Проверяем rate limit
     ok, wait = check_rate_limit(message.from_user.id)
@@ -1555,7 +1573,8 @@ def register_handlers(dp):
     """Регистрация всех обработчиков."""
     
     # Главное меню
-    dp.message.register(admin_handler, F.text.in_(["⚙️ Админка", "🔙 Назад"]), IsAuthorizedUser())
+    dp.message.register(admin_handler, F.text == "⚙️ Админка", IsAuthorizedUser())
+    dp.message.register(back_handler, F.text.in_(["🔙 Назад", "Назад"]))
     
     # Публичные
     dp.message.register(public_materials_select, F.text.in_(["📚 Материалы", "Материалы"]), IsAuthorizedUser())
