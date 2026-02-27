@@ -1454,7 +1454,8 @@ async def group_help_handler(message: Message):
         "🤖 *Команды SABot в группе:*\n\n"
         "`/sabot_help` - эта справка\n"
         "`/events` - предстоящие события\n"
-        "`/material <название>` - найти материал\n\n"
+        "`/material <название>` - найти материал\n"
+        "`/off` или `/remove_kb` - убрать клавиатуру бота\n\n"
         "_Для управления используйте бота в ЛС_"
     )
     await message.reply(help_text, parse_mode="Markdown")
@@ -1536,6 +1537,18 @@ async def group_material_handler(message: Message):
     await message.reply("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
 
 
+async def group_remove_keyboard(message: Message):
+    """Удаление reply-клавиатуры в группе (/off или /remove_kb)."""
+    if message.chat.type == "private":
+        return
+    
+    from aiogram.types import ReplyKeyboardRemove
+    await message.reply(
+        "⌨️ Клавиатура скрыта.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+
 # ==================== РЕГИСТРАЦИЯ ====================
 
 def register_handlers(dp):
@@ -1597,6 +1610,7 @@ def register_handlers(dp):
     dp.message.register(group_help_handler, Command("sabot_help"))
     dp.message.register(group_events_handler, Command("events"))
     dp.message.register(group_material_handler, Command("material"))
+    dp.message.register(group_remove_keyboard, Command("off", "remove_kb"))
     
     # Fallback handler - ловит все неизвестные сообщения от авторизованных пользователей
     dp.message.register(fallback_handler, IsAuthorizedUser())
