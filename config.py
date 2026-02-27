@@ -26,6 +26,15 @@ STAGES = {
     STAGE_ROADMAP: "🗺️ Roadmap (info)",
 }
 
+# --- Настройки группы для анонсов ---
+ANNOUNCEMENT_GROUP_ID = os.getenv("ANNOUNCEMENT_GROUP_ID", "")
+ANNOUNCEMENT_TOPIC_ID = os.getenv("ANNOUNCEMENT_TOPIC_ID", "")
+# Конвертируем в int если заданы
+if ANNOUNCEMENT_GROUP_ID:
+    ANNOUNCEMENT_GROUP_ID = int(ANNOUNCEMENT_GROUP_ID)
+if ANNOUNCEMENT_TOPIC_ID:
+    ANNOUNCEMENT_TOPIC_ID = int(ANNOUNCEMENT_TOPIC_ID)
+
 # Проверка токена
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в .env файле!")

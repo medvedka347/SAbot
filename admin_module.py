@@ -2,13 +2,13 @@ import logging
 import re
 from datetime import datetime
 from urllib.parse import urlparse
-from aiogram import F
+from aiogram import F, Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, \
     CallbackQuery, Message
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
-from config import ROLE_ADMIN, ROLE_MENTOR, ROLES, STAGES
+from config import ROLE_ADMIN, ROLE_MENTOR, ROLES, STAGES, ANNOUNCEMENT_GROUP_ID, ANNOUNCEMENT_TOPIC_ID
 from db_utils import (
     get_user_role, get_user_by_id, get_user_by_username, IsAuthorizedUser,
     add_or_update_user, set_users_batch, delete_user, get_all_users,
@@ -69,6 +69,75 @@ def check_rate_limit(user_id: int) -> tuple[bool, int]:
     return True, 0
 
 
+# ==================== RATE LIMITING FOR GROUPS ====================
+
+# Хранилище для групп: {chat_id: {"command": {"timestamps": [], "muted_until": 0}}}
+_group_rate_limits = {}
+GROUP_RATE_LIMIT_WINDOW = 30.0      # 30 секунд
+GROUP_RATE_LIMIT_MAX = 3            # Макс 3 одинаковые команды
+GROUP_RATE_LIMIT_MUTE = 60          # Мут на 60 секунд
+
+def check_group_rate_limit(chat_id: int, command: str) -> tuple[bool, bool]:
+    """
+    Rate limit для команд в группах (общий на чат, по типу команды).
+    Returns: (можно_обрабатывать, в_муте)
+    """
+    from time import time
+    now = time()
+    
+    if chat_id not in _group_rate_limits:
+        _group_rate_limits[chat_id] = {}
+    
+    if command not in _group_rate_limits[chat_id]:
+        _group_rate_limits[chat_id][command] = {"timestamps": [], "muted_until": 0}
+    
+    data = _group_rate_limits[chat_id][command]
+    
+    # Проверяем мут
+    if data["muted_until"] > now:
+        return False, True
+    
+    # Очищаем старые записи
+    data["timestamps"] = [t for t in data["timestamps"] if now - t < GROUP_RATE_LIMIT_WINDOW]
+    
+    # Проверяем количество запросов
+    if len(data["timestamps"]) >= GROUP_RATE_LIMIT_MAX:
+        # Ставим мут на эту команду
+        data["muted_until"] = now + GROUP_RATE_LIMIT_MUTE
+        data["timestamps"] = []
+        return False, True
+    
+    # Регистрируем запрос
+    data["timestamps"].append(now)
+    
+    # Periodic cleanup: если много чатов - чистим старые
+    if len(_group_rate_limits) > 1000:
+        _cleanup_group_rate_limits(now)
+    
+    return True, False
+
+
+def _cleanup_group_rate_limits(now: float):
+    """Очистка неактивных записей rate limiter для групп."""
+    to_delete = []
+    for chat_id, commands in _group_rate_limits.items():
+        # Удаляем пустые команды (мут истек и нет таймстампов)
+        empty_commands = [
+            cmd for cmd, data in commands.items()
+            if data["muted_until"] < now and not data["timestamps"]
+        ]
+        for cmd in empty_commands:
+            del commands[cmd]
+        
+        # Если чат пустой - помечаем на удаление
+        if not commands:
+            to_delete.append(chat_id)
+    
+    # Удаляем пустые чаты
+    for chat_id in to_delete:
+        del _group_rate_limits[chat_id]
+
+
 # ==================== FSM ====================
 
 class Form(StatesGroup):
@@ -82,6 +151,7 @@ class Form(StatesGroup):
     input_type = State()
     input_datetime = State()
     input_announcement = State()
+    confirm_announce = State()  # Подтверждение размещения анонса в группе
     input_users = State()  # Новое: ввод пользователей (ID и/или @username)
     selecting_role = State()
     selecting_user_to_delete = State()
@@ -706,12 +776,100 @@ async def event_add_announcement(message: Message, state: FSMContext):
         await state.clear()
         await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id))
         return
+    # Сохраняем анонс в state и переходим к подтверждению
+    await state.update_data(event_announcement=ann)
+    
+    # Если не настроена группа для анонсов - сразу сохраняем
+    if not ANNOUNCEMENT_GROUP_ID:
+        try:
+            await add_event(event_type, event_datetime, event_link, ann)
+            await message.answer("✅ Событие добавлено!")
+        except Exception as e:
+            logging.error(e)
+            await message.answer("❌ Ошибка сохранения")
+        await events_menu(message, state)
+        return
+    
+    # Спрашиваем про размещение анонса
+    await state.set_state(Form.confirm_announce)
+    preview = (
+        f"📅 *{event_type}*\n"
+        f"🕐 {event_datetime}\n"
+        f"🔗 {event_link or '—'}\n\n"
+        f"{ann[:500]}{'...' if len(ann) > 500 else ''}"
+    )
+    await message.answer(
+        f"{preview}\n\n📢 Разместить анонс в группе?",
+        parse_mode="Markdown",
+        reply_markup=kb(["✅ Да", "❌ Нет"])
+    )
+
+
+async def event_confirm_announce(message: Message, state: FSMContext):
+    """Подтверждение размещения анонса в группе."""
+    if not message.text:
+        return
+    
+    bot = message.bot
+    
+    data = await state.get_data()
+    event_type = data.get('event_type')
+    event_datetime = data.get('event_datetime')
+    event_link = data.get('event_link')
+    event_announcement = data.get('event_announcement')
+    
+    if not all([event_type, event_datetime, event_announcement]):
+        await state.clear()
+        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id))
+        return
+    
+    # Сохраняем событие в БД
     try:
-        await add_event(event_type, event_datetime, event_link, ann)
+        await add_event(event_type, event_datetime, event_link, event_announcement)
         await message.answer("✅ Событие добавлено!")
     except Exception as e:
         logging.error(e)
         await message.answer("❌ Ошибка сохранения")
+        await events_menu(message, state)
+        return
+    
+    # Если выбрано "Да" - постим в группу
+    if message.text == "✅ Да" and ANNOUNCEMENT_GROUP_ID:
+        try:
+            # Формируем анонс для группы
+            group_text = (
+                f"📅 *{event_type}*\n"
+                f"🕐 {event_datetime}\n"
+            )
+            if event_link:
+                group_text += f"🔗 [Ссылка на событие]({event_link})\n"
+            group_text += f"\n{event_announcement}"
+            
+            # Клавиатура с кнопками (без обработки, для визуала)
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            rsvp_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✅ Иду", callback_data="noop"),
+                    InlineKeyboardButton(text="❌ Не иду", callback_data="noop")
+                ]
+            ])
+            
+            # Отправляем в группу (с указанием топика если есть)
+            kwargs = {
+                "chat_id": ANNOUNCEMENT_GROUP_ID,
+                "text": group_text,
+                "parse_mode": "Markdown",
+                "reply_markup": rsvp_kb
+            }
+            if ANNOUNCEMENT_TOPIC_ID:
+                kwargs["message_thread_id"] = ANNOUNCEMENT_TOPIC_ID
+            
+            await bot.send_message(**kwargs)
+            await message.answer("📢 Анонс размещён в группе!")
+        except Exception as e:
+            logging.error(f"Ошибка отправки в группу: {e}")
+            await message.answer("⚠️ Событие сохранено, но не удалось разместить анонс в группе.")
+    
     await events_menu(message, state)
 
 
@@ -1268,6 +1426,95 @@ async def error_handler(event, exception):
             pass
 
 
+# ==================== КОМАНДЫ ДЛЯ ГРУПП ====================
+
+async def group_help_handler(message: Message):
+    """Справка по командам в группе (/sabot_help)."""
+    # Проверяем rate limit
+    if message.chat.type == "private":
+        return  # Только для групп
+    
+    ok, muted = check_group_rate_limit(message.chat.id, "help")
+    if muted:
+        return  # В муте - игнорируем
+    if not ok:
+        await message.reply("⏱️ Слишком быстро! Подождите минуту.")
+        return
+    
+    help_text = (
+        "🤖 *Команды SABot в группе:*\n\n"
+        "`/sabot_help` - эта справка\n"
+        "`/events` - предстоящие события\n"
+        "`/material <название>` - найти материал\n\n"
+        "_Для управления используйте бота в ЛС_"
+    )
+    await message.reply(help_text, parse_mode="Markdown")
+
+
+async def group_events_handler(message: Message):
+    """Показать события в группе (/events)."""
+    if message.chat.type == "private":
+        return
+    
+    ok, muted = check_group_rate_limit(message.chat.id, "events")
+    if muted:
+        return
+    if not ok:
+        await message.reply("⏱️ Слишком быстро! Подождите минуту.")
+        return
+    
+    events = await get_events()
+    if not events:
+        await message.reply("📭 Предстоящих событий нет.")
+        return
+    
+    lines = ["📅 *Предстоящие события:*\n"]
+    for e in events[:10]:  # Максимум 10
+        lines.append(f"\n*{e['event_type']}* | {e['event_datetime']}")
+        if e.get('link'):
+            lines.append(f"🔗 [Ссылка]({e['link']})")
+    
+    await message.reply("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
+
+
+async def group_material_handler(message: Message):
+    """Поиск материала в группе (/material <название>)."""
+    if message.chat.type == "private":
+        return
+    
+    ok, muted = check_group_rate_limit(message.chat.id, "material")
+    if muted:
+        return
+    if not ok:
+        await message.reply("⏱️ Слишком быстро! Подождите минуту.")
+        return
+    
+    # Извлекаем запрос
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.reply(
+            "📚 *Поиск материала*\n\n"
+            "Использование: `/material <ключевое слово>`\n"
+            "Пример: `/material REST`",
+            parse_mode="Markdown"
+        )
+        return
+    
+    query = parts[1].strip()
+    results = await search_materials(query)
+    
+    if not results:
+        await message.reply(f"🔍 По запросу *{query}* ничего не найдено.", parse_mode="Markdown")
+        return
+    
+    # Выводим компактно - только название и ссылка
+    lines = [f'📚 *Результаты по "{query}":*\n']
+    for m in results[:5]:  # Максимум 5
+        lines.append(f"• [{m['title']}]({m['link']})")
+    
+    await message.reply("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
+
+
 # ==================== РЕГИСТРАЦИЯ ====================
 
 def register_handlers(dp):
@@ -1304,6 +1551,7 @@ def register_handlers(dp):
     dp.message.register(event_add_datetime, Form.input_datetime, HasRole(ROLE_ADMIN))
     dp.message.register(event_add_link, Form.input_link, HasRole(ROLE_ADMIN))
     dp.message.register(event_add_announcement, Form.input_announcement, HasRole(ROLE_ADMIN))
+    dp.message.register(event_confirm_announce, Form.confirm_announce, HasRole(ROLE_ADMIN))
     dp.message.register(event_edit_select, F.text == "✏️ Редактировать", Form.menu_events, HasRole(ROLE_ADMIN))
     dp.callback_query.register(event_edit_callback, F.data.startswith("edit_ev:"), HasRole(ROLE_ADMIN))
     dp.message.register(event_edit_process, Form.editing_field, HasRole(ROLE_ADMIN))
@@ -1323,6 +1571,11 @@ def register_handlers(dp):
     # Баны
     dp.message.register(bans_menu, F.text == "🚫 Управление банами", HasRole(ROLE_ADMIN))
     dp.callback_query.register(ban_unban_callback, F.data.startswith("unban:"), HasRole(ROLE_ADMIN))
+    
+    # Команды для групп (без проверки ролей, но с rate limit)
+    dp.message.register(group_help_handler, Command("sabot_help"))
+    dp.message.register(group_events_handler, Command("events"))
+    dp.message.register(group_material_handler, Command("material"))
     
     # Fallback handler - ловит все неизвестные сообщения от авторизованных пользователей
     dp.message.register(fallback_handler, IsAuthorizedUser())
