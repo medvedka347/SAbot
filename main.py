@@ -39,6 +39,10 @@ def remove_pid_file():
 
 async def start_handler(message: Message):
     """Стартовый обработчик с проверкой бана."""
+    # Игнорируем /start в группах (не в ЛС)
+    if message.chat.type != "private":
+        return
+    
     user_id = message.from_user.id
     username = message.from_user.username
     
