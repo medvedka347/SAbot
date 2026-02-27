@@ -139,6 +139,11 @@ def _cleanup_group_rate_limits(now: float):
         del _group_rate_limits[chat_id]
 
 
+def private_only_kb(chat_type: str, kb):
+    """Возвращает клавиатуру только для приватных чатов."""
+    return kb if chat_type == "private" else None
+
+
 # ==================== FSM ====================
 
 class Form(StatesGroup):
@@ -474,7 +479,7 @@ async def handle_stage_selection(message: Message, state: FSMContext):
         await state.clear()
         await message.answer(
             "⚠️ Сессия устарела. Пожалуйста, начните сначала.",
-            reply_markup=await get_main_keyboard(message.from_user.id)
+            reply_markup=await get_main_keyboard(message.from_user.id, message.chat.type)
         )
         return
     
@@ -640,7 +645,7 @@ async def material_edit_process(message: Message, state: FSMContext):
     mat_id = data.get('edit_id')
     if not mat_id:
         await state.clear()
-        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id))
+        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id, message.chat.type))
         return
     parts = [p.strip() for p in message.text.split('\n\n') if p.strip()]
     
@@ -775,7 +780,7 @@ async def event_add_announcement(message: Message, state: FSMContext):
     event_link = data.get('event_link')
     if not all([event_type, event_datetime]):
         await state.clear()
-        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id))
+        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id, message.chat.type))
         return
     # Сохраняем анонс в state и переходим к подтверждению
     await state.update_data(event_announcement=ann)
@@ -821,7 +826,7 @@ async def event_confirm_announce(message: Message, state: FSMContext):
     
     if not all([event_type, event_datetime, event_announcement]):
         await state.clear()
-        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id))
+        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id, message.chat.type))
         return
     
     # Сохраняем событие в БД
@@ -919,7 +924,7 @@ async def event_edit_process(message: Message, state: FSMContext):
     ev_id = data.get('edit_id')
     if not ev_id:
         await state.clear()
-        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id))
+        await message.answer("⚠️ Сессия истекла. Начните сначала.", reply_markup=await get_main_keyboard(message.from_user.id, message.chat.type))
         return
     parts = [p.strip() for p in message.text.split('\n\n') if p.strip()]
     updates = {}
@@ -1407,7 +1412,7 @@ async def fallback_handler(message: Message, state: FSMContext):
     # Отправляем подсказку
     await message.answer(
         "❓ Не понял команду. Используйте кнопки меню или /start",
-        reply_markup=await get_main_keyboard(message.from_user.id)
+        reply_markup=await get_main_keyboard(message.from_user.id, message.chat.type)
     )
 
 

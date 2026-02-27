@@ -111,7 +111,9 @@ async def start_handler(message: Message):
     else:
         kb = user_kb
     
-    await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
+    # Клавиатура только в ЛС, в группах не отправляем
+    markup = kb if message.chat.type == "private" else None
+    await message.answer(welcome, parse_mode="Markdown", reply_markup=markup)
 
 
 async def booking_handler(message: Message):
@@ -134,7 +136,7 @@ async def booking_handler(message: Message):
         "_Если очередь на мок больше 3 дней у всех, то напишите в ЛС. Найду слот_\n\n"
         '*Порядок "Первый, второй, третий, четвёртый" не является порядком, это просто список. Порядок может быть любым. Это написано для удобства структуры и читаемости*',
         parse_mode="Markdown",
-        reply_markup=mock_kb
+        reply_markup=(mock_kb if message.chat.type == "private" else None)
     )
 
 
@@ -152,7 +154,7 @@ async def mock_select_handler(message: Message):
             f"[Записаться на мок](https://cal.com/akhmadishin/мок)\n\n"
             f"Нажмите на ссылку для выбора удобного времени.",
             parse_mode="Markdown",
-            reply_markup=user_kb
+            reply_markup=(user_kb if message.chat.type == "private" else None)
         )
     elif mentor == "Регина":
         await message.answer(
@@ -160,7 +162,7 @@ async def mock_select_handler(message: Message):
             f"[Записаться на мок](https://cal.com/ocpocmak/mock)\n\n"
             f"Нажмите на ссылку для выбора удобного времени.",
             parse_mode="Markdown",
-            reply_markup=user_kb
+            reply_markup=(user_kb if message.chat.type == "private" else None)
         )
     elif mentor in ["Влад", "Иван"]:
         await message.answer(
