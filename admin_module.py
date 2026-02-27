@@ -16,7 +16,7 @@ from db_utils import (
     add_event, get_events, update_event, delete_event,
     add_material, get_materials, get_material, update_material, delete_material, get_materials_stats,
     normalize_username, validate_user_id, cleanup_expired_bans,
-    search_materials, get_active_bans, unban_user, db as _db
+    search_materials, search_materials_by_title, get_active_bans, unban_user, db as _db
 )
 
 
@@ -1502,7 +1502,8 @@ async def group_material_handler(message: Message):
         return
     
     query = parts[1].strip()
-    results = await search_materials(query)
+    # Поиск только по названию материала
+    results = await search_materials_by_title(query)
     
     if not results:
         await message.reply(f"🔍 По запросу *{query}* ничего не найдено.", parse_mode="Markdown")

@@ -732,4 +732,18 @@ async def search_materials(query: str) -> list[dict]:
     ]
 
 
+async def search_materials_by_title(query: str) -> list[dict]:
+    """Поиск материалов только по названию (case-insensitive)."""
+    like = f"%{query.strip()}%"
+    rows = await db.fetchall(
+        "SELECT id, stage, title, link, description FROM materials "
+        "WHERE title LIKE ? ORDER BY stage, created_at",
+        (like,)
+    )
+    return [
+        {"id": r[0], "stage": r[1], "title": r[2], "link": r[3], "description": r[4]}
+        for r in rows
+    ]
+
+
 # Created by Техножрец R1sl1n
