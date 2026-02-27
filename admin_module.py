@@ -151,17 +151,22 @@ class Form(StatesGroup):
     menu_events = State()  # Отдельное состояние для меню событий
     selecting_stage = State()
     selecting_item = State()
-    input_title = State()
-    input_link = State()
-    input_desc = State()
-    input_type = State()
-    input_datetime = State()
-    input_announcement = State()
-    confirm_announce = State()  # Подтверждение размещения анонса в группе
-    input_users = State()  # Новое: ввод пользователей (ID и/или @username)
+    # Материалы
+    material_input_title = State()
+    material_input_link = State()
+    material_input_desc = State()
+    material_editing = State()
+    # События
+    event_input_type = State()
+    event_input_datetime = State()
+    event_input_link = State()
+    event_input_announcement = State()
+    event_confirm_announce = State()
+    event_editing = State()
+    # Общие
+    input_users = State()
     selecting_role = State()
     selecting_user_to_delete = State()
-    editing_field = State()
 
 
 # ==================== КЛАВИАТУРЫ ====================
@@ -512,7 +517,7 @@ async def handle_stage_selection(message: Message, state: FSMContext):
     # Обработка add_material
     if next_action == "add_material":
         await state.update_data(stage=stage)
-        await state.set_state(Form.input_title)
+        await state.set_state(Form.material_input_title)
         await message.answer("Введите название:", reply_markup=back_kb)
         return
     
@@ -553,7 +558,7 @@ async def material_add_title(message: Message, state: FSMContext):
         await message.answer("❌ Название слишком длинное (макс 200 символов)")
         return
     await state.update_data(title=message.text)
-    await state.set_state(Form.input_link)
+    await state.set_state(Form.material_input_link)
     await message.answer("Введите ссылку (http://...):", reply_markup=back_kb)
 
 
@@ -565,7 +570,7 @@ async def material_add_link(message: Message, state: FSMContext):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
     await state.update_data(link=link)
-    await state.set_state(Form.input_desc)
+    await state.set_state(Form.material_input_desc)
     await message.answer("Введите описание (или 'пропустить'):", reply_markup=back_kb)
 
 
@@ -629,7 +634,7 @@ async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
         await _handle_item_callback(
             callback, state,
             getter_func=get_material,
-            state_to_set=Form.editing_field,
+            state_to_set=Form.material_editing,
             edit_template=(
                 "✏️ Редактирование *{name}*\n\n"
                 "Отправьте новые данные в формате:\n"
@@ -726,7 +731,7 @@ async def events_show_all(message: Message, state: FSMContext):
 # --- Добавление событий ---
 
 async def event_add_start(message: Message, state: FSMContext):
-    await state.set_state(Form.input_type)
+    await state.set_state(Form.event_input_type)
     await message.answer("Введите тип (Вебинар, Митап, Квиз):", reply_markup=back_kb)
 
 
@@ -737,7 +742,7 @@ async def event_add_type(message: Message, state: FSMContext):
         await message.answer("❌ Тип события слишком длинный (макс 100 символов)")
         return
     await state.update_data(event_type=message.text)
-    await state.set_state(Form.input_datetime)
+    await state.set_state(Form.event_input_datetime)
     await message.answer("Введите дату `2024-12-31 18:00:00`:", parse_mode="Markdown", reply_markup=back_kb)
 
 
@@ -753,7 +758,7 @@ async def event_add_datetime(message: Message, state: FSMContext):
         await message.answer("❌ Формат: `2024-12-31 18:00:00`", parse_mode="Markdown")
         return
     await state.update_data(event_datetime=dt)
-    await state.set_state(Form.input_link)
+    await state.set_state(Form.event_input_link)
     await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
 
 
@@ -767,7 +772,7 @@ async def event_add_link(message: Message, state: FSMContext):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
     await state.update_data(event_link=link)
-    await state.set_state(Form.input_announcement)
+    await state.set_state(Form.event_input_announcement)
     await message.answer("Введите анонс:", reply_markup=back_kb)
 
 
@@ -801,7 +806,7 @@ async def event_add_announcement(message: Message, state: FSMContext):
         return
     
     # Спрашиваем про размещение анонса
-    await state.set_state(Form.confirm_announce)
+    await state.set_state(Form.event_confirm_announce)
     preview = (
         f"📅 *{event_type}*\n"
         f"🕐 {event_datetime}\n"
@@ -912,7 +917,7 @@ async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❌ Не найдено")
         return
     await state.update_data(edit_id=ev_id, edit_ev=ev)
-    await state.set_state(Form.editing_field)
+    await state.set_state(Form.event_editing)
     await callback.message.edit_text(
         f"✏️ Редактирование события *{ev_id}*\n\n"
         f"Отправьте: `тип\n\nдата\n\nссылка\n\nописание`\n\n"
@@ -1586,12 +1591,12 @@ def register_handlers(dp):
     dp.message.register(materials_menu, F.text == "📦 Управление материалами", HasRole(ROLE_ADMIN))
     dp.message.register(material_select_stage, F.text == "📖 Просмотреть", Form.menu, HasRole(ROLE_ADMIN))
     dp.message.register(material_add_start, F.text == "➕ Добавить", Form.menu, HasRole(ROLE_ADMIN))
-    dp.message.register(material_add_title, Form.input_title, Form.menu, HasRole(ROLE_ADMIN))
-    dp.message.register(material_add_link, Form.input_link, Form.menu, HasRole(ROLE_ADMIN))
-    dp.message.register(material_add_desc, Form.input_desc, Form.menu, HasRole(ROLE_ADMIN))
+    dp.message.register(material_add_title, Form.material_input_title, Form.menu, HasRole(ROLE_ADMIN))
+    dp.message.register(material_add_link, Form.material_input_link, Form.menu, HasRole(ROLE_ADMIN))
+    dp.message.register(material_add_desc, Form.material_input_desc, Form.menu, HasRole(ROLE_ADMIN))
     dp.message.register(material_edit_select_stage, F.text == "✏️ Редактировать", Form.menu, HasRole(ROLE_ADMIN))
     dp.callback_query.register(material_edit_callback, F.data.startswith("edit_mat:"), HasRole(ROLE_ADMIN))
-    dp.message.register(material_edit_process, Form.editing_field, Form.menu, HasRole(ROLE_ADMIN))
+    dp.message.register(material_edit_process, Form.material_editing, Form.menu, HasRole(ROLE_ADMIN))
     dp.message.register(material_delete_select_stage, F.text == "🗑️ Удалить", Form.menu, HasRole(ROLE_ADMIN))
     dp.callback_query.register(material_delete_callback, F.data.startswith("del_mat:"), HasRole(ROLE_ADMIN))
     dp.message.register(material_stats, F.text == "📊 Статистика", Form.menu, HasRole(ROLE_ADMIN))
@@ -1600,14 +1605,14 @@ def register_handlers(dp):
     dp.message.register(events_menu, F.text == "📋 Управление событиями", HasRole(ROLE_ADMIN))
     dp.message.register(events_show_all, F.text == "📖 Просмотреть", Form.menu_events, HasRole(ROLE_ADMIN))
     dp.message.register(event_add_start, F.text == "➕ Добавить", Form.menu_events, HasRole(ROLE_ADMIN))
-    dp.message.register(event_add_type, Form.input_type, Form.menu_events, HasRole(ROLE_ADMIN))
-    dp.message.register(event_add_datetime, Form.input_datetime, Form.menu_events, HasRole(ROLE_ADMIN))
-    dp.message.register(event_add_link, Form.input_link, Form.menu_events, HasRole(ROLE_ADMIN))
-    dp.message.register(event_add_announcement, Form.input_announcement, Form.menu_events, HasRole(ROLE_ADMIN))
-    dp.message.register(event_confirm_announce, Form.confirm_announce, Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.message.register(event_add_type, Form.event_input_type, Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.message.register(event_add_datetime, Form.event_input_datetime, Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.message.register(event_add_link, Form.event_input_link, Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.message.register(event_add_announcement, Form.event_input_announcement, Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.message.register(event_confirm_announce, Form.event_confirm_announce, Form.menu_events, HasRole(ROLE_ADMIN))
     dp.message.register(event_edit_select, F.text == "✏️ Редактировать", Form.menu_events, HasRole(ROLE_ADMIN))
     dp.callback_query.register(event_edit_callback, F.data.startswith("edit_ev:"), HasRole(ROLE_ADMIN))
-    dp.message.register(event_edit_process, Form.editing_field, Form.menu_events, HasRole(ROLE_ADMIN))
+    dp.message.register(event_edit_process, Form.event_editing, Form.menu_events, HasRole(ROLE_ADMIN))
     dp.message.register(event_delete_select, F.text == "🗑️ Удалить", Form.menu_events, HasRole(ROLE_ADMIN))
     dp.callback_query.register(event_delete_callback, F.data.startswith("del_ev:"), HasRole(ROLE_ADMIN))
     
