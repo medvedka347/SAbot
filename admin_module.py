@@ -2,7 +2,8 @@ import logging
 import re
 from datetime import datetime
 from urllib.parse import urlparse
-from aiogram import F, Command
+from aiogram import F
+from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, \
     CallbackQuery, Message
 from aiogram.fsm.state import State, StatesGroup
