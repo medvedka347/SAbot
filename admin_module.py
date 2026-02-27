@@ -1431,6 +1431,9 @@ async def error_handler(event, exception):
 
 async def group_help_handler(message: Message):
     """Справка по командам в группе (/sabot_help)."""
+    # Игнорируем реплаи (ответы в тредах)
+    if message.reply_to_message:
+        return
     # Проверяем rate limit
     if message.chat.type == "private":
         return  # Только для групп
@@ -1454,6 +1457,8 @@ async def group_help_handler(message: Message):
 
 async def group_events_handler(message: Message):
     """Показать события в группе (/events)."""
+    if message.reply_to_message:
+        return
     if message.chat.type == "private":
         return
     
@@ -1480,6 +1485,8 @@ async def group_events_handler(message: Message):
 
 async def group_material_handler(message: Message):
     """Поиск материала в группе (/material <название>)."""
+    if message.reply_to_message:
+        return
     if message.chat.type == "private":
         return
     
