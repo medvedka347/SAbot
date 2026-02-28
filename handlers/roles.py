@@ -141,6 +141,10 @@ async def _show_users_page(
 @router.message(F.text == "📋 Список пользователей", RoleStates.menu, HasRole(ROLE_ADMIN))
 async def roles_show(message: Message, state: FSMContext):
     """Показать список всех пользователей (с пагинацией)."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
+    
     users = await get_all_users()
     if not users:
         await message.answer("📭 Пользователей нет")
@@ -193,6 +197,9 @@ async def users_page_callback(callback: CallbackQuery):
 @router.message(F.text == "➕ Назначить роль", RoleStates.menu, HasRole(ROLE_ADMIN))
 async def role_add_start(message: Message, state: FSMContext):
     """Начало добавления/изменения роли."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     await state.set_state(RoleStates.input_users)
     text = (
         "Введите пользователей для назначения роли:\n\n"
@@ -270,6 +277,9 @@ async def role_set_callback(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "🗑️ Удалить пользователя", RoleStates.menu, HasRole(ROLE_ADMIN))
 async def role_delete_start(message: Message, state: FSMContext):
     """Начало удаления пользователя."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     users = await get_all_users()
     if not users:
         await message.answer("📭 Нет пользователей", reply_markup=roles_menu_kb)

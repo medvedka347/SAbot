@@ -56,6 +56,9 @@ def format_event(ev: dict) -> str:
 @router.message(F.text == "📋 Управление событиями", HasRole(ROLE_ADMIN))
 async def events_menu(message: Message, state: FSMContext):
     """Главное меню управления событиями."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
@@ -82,6 +85,9 @@ async def events_show_all(message: Message, state: FSMContext):
 @router.message(F.text == "➕ Добавить", EventStates.menu, HasRole(ROLE_ADMIN))
 async def event_add_start(message: Message, state: FSMContext):
     """Начало добавления события."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     await state.set_state(EventStates.input_type)
     await message.answer("Введите тип (Вебинар, Митап, Квиз):", reply_markup=back_kb)
 
@@ -343,6 +349,9 @@ async def event_edit_process(message: Message, state: FSMContext):
 @router.message(F.text == "🗑️ Удалить", EventStates.menu, HasRole(ROLE_ADMIN))
 async def event_delete_select(message: Message, state: FSMContext):
     """Выбор события для удаления."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     events = await get_events()
     if not events:
         await message.answer("📭 Нет событий", reply_markup=events_menu_kb)

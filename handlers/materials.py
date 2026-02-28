@@ -61,6 +61,9 @@ def format_material(mat: dict) -> str:
 @router.message(F.text == "📦 Управление материалами", HasRole(ROLE_ADMIN))
 async def materials_menu(message: Message, state: FSMContext):
     """Главное меню управления материалами."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
@@ -74,6 +77,9 @@ async def materials_menu(message: Message, state: FSMContext):
 @router.message(F.text == "📖 Просмотреть", MaterialStates.menu, HasRole(ROLE_ADMIN))
 async def material_select_stage(message: Message, state: FSMContext):
     """Выбор stage для просмотра материалов."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     await state.set_state(MaterialStates.selecting_stage)
     await state.update_data(action="show_list")
     await message.answer("Выберите раздел:", reply_markup=stage_kb)
@@ -149,6 +155,9 @@ async def handle_stage_selection_admin(message: Message, state: FSMContext):
 @router.message(F.text == "➕ Добавить", MaterialStates.menu, HasRole(ROLE_ADMIN))
 async def material_add_start(message: Message, state: FSMContext):
     """Начало добавления материала."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     await state.set_state(MaterialStates.selecting_stage)
     await state.update_data(action="add_material")
     await message.answer("➕ Выберите раздел для добавления:", reply_markup=stage_kb)

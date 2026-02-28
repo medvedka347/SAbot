@@ -166,7 +166,8 @@ async def admin_handler(message: Message, state: FSMContext):
     text_map = {ROLE_ADMIN: "🔧 Панель администратора", ROLE_MENTOR: "🎓 Панель ментора"}
     
     if role in kb_map:
-        await message.answer(text_map[role], reply_markup=kb_map[role])
+        kb = kb_map[role] if message.chat.type == "private" else None
+        await message.answer(text_map[role], reply_markup=kb)
     else:
         await message.answer("❌ Нет доступа.")
 
@@ -179,7 +180,7 @@ async def back_handler(message: Message, state: FSMContext):
     await state.clear()
     role = await get_user_role(user_id=message.from_user.id, username=message.from_user.username)
     welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
-    kb = await get_main_keyboard(message.from_user.id)
+    kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
     await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
 
 
@@ -217,11 +218,12 @@ async def admin_access_denied_handler(message: Message, state: FSMContext):
         return
     
     await state.clear()
+    kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
     await message.answer(
         "❌ *Нет доступа*\n\n"
         "Эта функция доступна только администраторам.",
         parse_mode="Markdown",
-        reply_markup=await get_main_keyboard(message.from_user.id)
+        reply_markup=kb
     )
 
 
@@ -237,8 +239,9 @@ async def fallback_handler(message: Message, state: FSMContext):
     # Сбрасываем состояние
     await state.clear()
     
-    # Отправляем подсказку
+    # Отправляем подсказку (клавиатура только в ЛС)
+    kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
     await message.answer(
         "❓ Не понял команду. Используйте кнопки меню или /start",
-        reply_markup=await get_main_keyboard(message.from_user.id)
+        reply_markup=kb
     )

@@ -87,5 +87,5 @@ async def mock_select_handler(message: Message):
             f"_Запись пока недоступна_\n\n"
             f"Выберите другого ментора или попробуйте позже.",
             parse_mode="Markdown",
-            reply_markup=mock_kb
+            reply_markup=(mock_kb if message.chat.type == "private" else None)
         )
