@@ -84,38 +84,6 @@ python main.py
 
 ---
 
-## 🔧 Критические исправления стабильности
-
-### 1. 🗄️ Переход на aiosqlite (async SQLite)
-**Проблема:** Синхронные вызовы `sqlite3` из async кода блокировали event loop.
-**Решение:** Полный переход на `aiosqlite` — все функции БД теперь async/await.
-**Файлы:** `db_utils.py`, все `handlers/*.py`
-
-### 2. 🛡️ Глобальный обработчик ошибок
-**Где:** `main.py` → `dp.errors.register(error_handler)`
-
-### 3. ⏱️ Таймауты для polling
-**Где:** `main.py` → `polling_timeout=30`, `timeout=30`
-
-### 4. 🧹 Очистка rate limits
-**Где:** `utils.py` → `check_rate_limit()` — автоочистка старых записей
-
----
-
-## 🔧 Оптимизации для 150 concurrent users
-
-### 1. 🗄️ SQLite WAL Mode
-**Решение:** WAL (Write-Ahead Logging) + asyncio.Lock для сериализации записей.
-**Где:** `db_utils.py` → `Database` class
-
-### 2. 🔒 Защита от двойного запуска
-**Где:** `main.py` → `check_single_instance()` (PID-файл)
-
-### 3. 🛑 Graceful Shutdown
-**Где:** `main.py` → обработка SIGTERM/SIGINT
-
----
-
 ## 📝 Советы для AI-агентов
 
 1. **FSM States:** У каждого модуля свои StatesGroup:

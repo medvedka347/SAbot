@@ -48,7 +48,6 @@ class Database:
     async def init_tables(self):
         """Инициализация таблиц."""
         async with aiosqlite.connect(self.db_path) as db:
-            # Миграция user_roles
             await self._migrate_user_roles(db)
             
             # Materials
@@ -104,10 +103,8 @@ class Database:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_bans_active ON bans(user_id, username, banned_until)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_failed_user ON failed_attempts(user_id, username)")
             
-            # Миграция materials
             await self._migrate_materials(db)
             
-            # Создание индексов
             await db.execute("CREATE INDEX IF NOT EXISTS idx_bans_user ON bans(user_id, username)")
             
             await db.commit()
@@ -141,7 +138,7 @@ class Database:
         if 'id' in columns:
             return
         
-        # Старая схема с составным PRIMARY KEY - нужна миграция
+        # Таблица без колонки 'id' - нужна миграция на новую схему
         logging.warning("Миграция: исправление структуры user_roles")
         
         await db.execute("DROP TABLE IF EXISTS user_roles_new")
