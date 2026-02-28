@@ -183,35 +183,36 @@ async def back_handler(message: Message, state: FSMContext):
     current_state = await state.get_state()
     
     # Обработка состояний материалов
-    if current_state == MaterialStates.input_title.state:
+    # В aiogram 3.x get_state() возвращает строку вида "MaterialStates:input_title"
+    if current_state == str(MaterialStates.input_title):
         await state.set_state(MaterialStates.selecting_stage)
         from utils import stage_kb
         await message.answer("➕ Выберите раздел для добавления:", reply_markup=stage_kb)
         return
     
-    if current_state == MaterialStates.input_link.state:
+    if current_state == str(MaterialStates.input_link):
         await state.set_state(MaterialStates.input_title)
         from utils import back_kb
         await message.answer("Введите название:", reply_markup=back_kb)
         return
     
-    if current_state == MaterialStates.input_desc.state:
+    if current_state == str(MaterialStates.input_desc):
         await state.set_state(MaterialStates.input_link)
         from utils import back_kb
         await message.answer("Введите ссылку (https://...):", reply_markup=back_kb)
         return
     
-    if current_state == MaterialStates.editing.state:
+    if current_state == str(MaterialStates.editing):
         from handlers.materials import materials_menu
         await materials_menu(message, state)
         return
     
-    if current_state == MaterialStates.selecting_stage.state:
+    if current_state == str(MaterialStates.selecting_stage):
         from handlers.materials import materials_menu
         await materials_menu(message, state)
         return
     
-    if current_state == MaterialStates.selecting_stage_public.state:
+    if current_state == str(MaterialStates.selecting_stage_public):
         # Для публичного просмотра - в главное меню
         await state.clear()
         role = await get_user_role(user_id=message.from_user.id, username=message.from_user.username)
@@ -221,42 +222,42 @@ async def back_handler(message: Message, state: FSMContext):
         return
     
     # Обработка состояний событий
-    if current_state == EventStates.input_type.state:
+    if current_state == str(EventStates.input_type):
         from handlers.events import events_menu
         await events_menu(message, state)
         return
     
-    if current_state == EventStates.input_datetime.state:
+    if current_state == str(EventStates.input_datetime):
         await state.set_state(EventStates.input_type)
         from utils import back_kb
         await message.answer("Введите тип (Вебинар, Митап, Квиз):", reply_markup=back_kb)
         return
     
-    if current_state == EventStates.input_link.state:
+    if current_state == str(EventStates.input_link):
         await state.set_state(EventStates.input_datetime)
         from utils import back_kb
         await message.answer("Введите дату `2024-12-31 18:00:00`:", parse_mode="Markdown", reply_markup=back_kb)
         return
     
-    if current_state == EventStates.input_announcement.state:
+    if current_state == str(EventStates.input_announcement):
         await state.set_state(EventStates.input_link)
         from utils import back_kb
         await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
         return
     
-    if current_state == EventStates.confirm_announce.state:
+    if current_state == str(EventStates.confirm_announce):
         await state.set_state(EventStates.input_announcement)
         from utils import back_kb
         await message.answer("Введите анонс:", reply_markup=back_kb)
         return
     
-    if current_state == EventStates.editing.state:
+    if current_state == str(EventStates.editing):
         from handlers.events import events_menu
         await events_menu(message, state)
         return
     
     # Обработка состояний ролей
-    if current_state == RoleStates.input_users.state:
+    if current_state == str(RoleStates.input_users):
         from handlers.roles import roles_menu
         await roles_menu(message, state)
         return
