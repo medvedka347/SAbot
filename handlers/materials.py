@@ -82,6 +82,14 @@ async def material_select_stage(message: Message, state: FSMContext):
 @router.message(MaterialStates.selecting_stage, HasRole(ROLE_ADMIN))
 async def handle_stage_selection_admin(message: Message, state: FSMContext):
     """Обработка выбора stage в админке."""
+    # Проверяем кнопку "Назад" первым делом
+    if message.text and ("Назад" in message.text or message.text == "Назад"):
+        await state.clear()
+        welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *admin*"
+        kb = await get_main_keyboard(message.from_user.id)
+        await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
+        return
+    
     stage = get_stage_key(message.text)
     if not stage:
         return
@@ -159,6 +167,10 @@ async def material_add_title(message: Message, state: FSMContext):
     """Получение названия материала."""
     if not message.text:
         return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await materials_menu(message, state)
+        return
     if len(message.text) > 200:
         await message.answer("❌ Название слишком длинное (макс 200 символов)")
         return
@@ -172,6 +184,10 @@ async def material_add_title(message: Message, state: FSMContext):
 async def material_add_link(message: Message, state: FSMContext):
     """Получение ссылки на материал."""
     if not message.text:
+        return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await materials_menu(message, state)
         return
     
     link = message.text.strip()
@@ -190,6 +206,10 @@ async def material_add_link(message: Message, state: FSMContext):
 async def material_add_desc(message: Message, state: FSMContext):
     """Получение описания и сохранение материала."""
     if not message.text:
+        return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await materials_menu(message, state)
         return
     
     desc = message.text.strip()
@@ -248,6 +268,10 @@ async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
 async def material_edit_process(message: Message, state: FSMContext):
     """Обработка редактирования материала."""
     if not message.text:
+        return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await materials_menu(message, state)
         return
     
     data = await state.get_data()
@@ -349,6 +373,19 @@ async def public_materials_select(message: Message, state: FSMContext):
 @router.message(MaterialStates.selecting_stage_public)
 async def handle_stage_selection_public(message: Message, state: FSMContext):
     """Публичный просмотр материалов по stage."""
+    # Проверяем кнопку "Назад" первым делом
+    if message.text and ("Назад" in message.text or message.text == "Назад"):
+        await state.clear()
+        from utils import get_main_keyboard
+        from config import ROLE_ADMIN, ROLE_MENTOR
+        from db_utils import get_user_role
+        
+        role = await get_user_role(user_id=message.from_user.id, username=message.from_user.username)
+        welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
+        kb = await get_main_keyboard(message.from_user.id)
+        await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
+        return
+    
     stage = get_stage_key(message.text)
     if not stage:
         return

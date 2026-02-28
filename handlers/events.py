@@ -91,6 +91,10 @@ async def event_add_type(message: Message, state: FSMContext):
     """Получение типа события."""
     if not message.text:
         return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await events_menu(message, state)
+        return
     if len(message.text) > 100:
         await message.answer("❌ Тип события слишком длинный (макс 100 символов)")
         return
@@ -103,6 +107,10 @@ async def event_add_type(message: Message, state: FSMContext):
 async def event_add_datetime(message: Message, state: FSMContext):
     """Получение даты события."""
     if not message.text:
+        return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await events_menu(message, state)
         return
     dt = message.text.strip()
     try:
@@ -122,6 +130,10 @@ async def event_add_link(message: Message, state: FSMContext):
     """Получение ссылки на событие."""
     if not message.text:
         return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await events_menu(message, state)
+        return
     link = message.text.strip()
     if link.lower() == "нет":
         link = ""
@@ -137,6 +149,10 @@ async def event_add_link(message: Message, state: FSMContext):
 async def event_add_announcement(message: Message, state: FSMContext):
     """Получение анонса и подготовка к сохранению."""
     if not message.text:
+        return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await events_menu(message, state)
         return
     ann = message.text.strip()
     if len(ann) > 2000:
@@ -188,6 +204,10 @@ async def event_add_announcement(message: Message, state: FSMContext):
 async def event_confirm_announce(message: Message, state: FSMContext, bot: Bot):
     """Подтверждение размещения анонса в группе."""
     if not message.text:
+        return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await events_menu(message, state)
         return
     
     data = await state.get_data()
@@ -300,6 +320,10 @@ async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
 async def event_edit_process(message: Message, state: FSMContext):
     """Обработка редактирования события."""
     if not message.text:
+        return
+    # Проверяем кнопку "Назад"
+    if "Назад" in message.text:
+        await events_menu(message, state)
         return
     
     data = await state.get_data()
