@@ -175,10 +175,94 @@ async def admin_handler(message: Message, state: FSMContext):
 
 @router.message(F.text.in_(["🔙 Назад", "Назад"]))
 async def back_handler(message: Message, state: FSMContext):
-    """Универсальный обработчик 'Назад' - возвращает в главное меню."""
-    # Сбрасываем состояние
-    await state.clear()
+    """Универсальный обработчик 'Назад' - возвращает на предыдущий шаг или в главное меню."""
+    from handlers.materials import MaterialStates
+    from handlers.events import EventStates
+    from handlers.roles import RoleStates
     
+    current_state = await state.get_state()
+    
+    # Обработка состояний материалов
+    if current_state == MaterialStates.input_title.state:
+        await state.set_state(MaterialStates.selecting_stage)
+        from utils import stage_kb
+        await message.answer("➕ Выберите раздел для добавления:", reply_markup=stage_kb)
+        return
+    
+    if current_state == MaterialStates.input_link.state:
+        await state.set_state(MaterialStates.input_title)
+        from utils import back_kb
+        await message.answer("Введите название:", reply_markup=back_kb)
+        return
+    
+    if current_state == MaterialStates.input_desc.state:
+        await state.set_state(MaterialStates.input_link)
+        from utils import back_kb
+        await message.answer("Введите ссылку (https://...):", reply_markup=back_kb)
+        return
+    
+    if current_state == MaterialStates.editing.state:
+        from handlers.materials import materials_menu
+        await materials_menu(message, state)
+        return
+    
+    if current_state == MaterialStates.selecting_stage.state:
+        from handlers.materials import materials_menu
+        await materials_menu(message, state)
+        return
+    
+    if current_state == MaterialStates.selecting_stage_public.state:
+        # Для публичного просмотра - в главное меню
+        await state.clear()
+        role = await get_user_role(user_id=message.from_user.id, username=message.from_user.username)
+        welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
+        kb = await get_main_keyboard(message.from_user.id)
+        await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
+        return
+    
+    # Обработка состояний событий
+    if current_state == EventStates.input_type.state:
+        from handlers.events import events_menu
+        await events_menu(message, state)
+        return
+    
+    if current_state == EventStates.input_datetime.state:
+        await state.set_state(EventStates.input_type)
+        from utils import back_kb
+        await message.answer("Введите тип (Вебинар, Митап, Квиз):", reply_markup=back_kb)
+        return
+    
+    if current_state == EventStates.input_link.state:
+        await state.set_state(EventStates.input_datetime)
+        from utils import back_kb
+        await message.answer("Введите дату `2024-12-31 18:00:00`:", parse_mode="Markdown", reply_markup=back_kb)
+        return
+    
+    if current_state == EventStates.input_announcement.state:
+        await state.set_state(EventStates.input_link)
+        from utils import back_kb
+        await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
+        return
+    
+    if current_state == EventStates.confirm_announce.state:
+        await state.set_state(EventStates.input_announcement)
+        from utils import back_kb
+        await message.answer("Введите анонс:", reply_markup=back_kb)
+        return
+    
+    if current_state == EventStates.editing.state:
+        from handlers.events import events_menu
+        await events_menu(message, state)
+        return
+    
+    # Обработка состояний ролей
+    if current_state == RoleStates.input_users.state:
+        from handlers.roles import roles_menu
+        await roles_menu(message, state)
+        return
+    
+    # По умолчанию - в главное меню
+    await state.clear()
     role = await get_user_role(user_id=message.from_user.id, username=message.from_user.username)
     welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
     kb = await get_main_keyboard(message.from_user.id)
