@@ -7,106 +7,121 @@
 
 ---
 
-## 📁 Архитектура (модульная)
+## 📁 Архитектура
 
 ```
 SABot/
-├── main.py                 # Точка входа: инициализация бота, роутеры, polling
-├── config.py               # Константы: токен, роли, стадии материалов
-├── db_utils.py             # Вся работа с БД: CRUD, фильтры, bans
-├── utils.py                # Клавиатуры, rate limit, formatters, helpers
-│
+├── main.py                 # Точка входа, роутеры, polling
+├── config.py               # Константы: токен, роли (ROLE_ADMIN, etc), стадии
+├── db_utils.py             # Database класс, CRUD, фильтр HasRole, AuthMiddleware
+├── utils.py                # Клавиатуры, rate limit, formatters
 └── handlers/               # Модули хендлеров (aiogram Router)
-    ├── __init__.py
-    ├── common.py           # /start, /help, ⚙️ Админка, 🔙 Назад, 🤝 Buddy
-    ├── materials.py        # CRUD материалов + публичный просмотр
-    ├── events.py           # CRUD событий + анонсы в группу
-    ├── roles.py            # Управление ролями пользователей
-    ├── bans.py             # Просмотр и снятие банов
-    ├── mocks.py            # Запись на мок-интервью
-    └── search.py           # /search, /material (group), /sabot_help
+    ├── common.py           # /start, /help, 🔙 Назад, fallback
+    ├── materials.py        # MaterialStates, CRUD материалов
+    ├── events.py           # EventStates, CRUD событий
+    ├── roles.py            # RoleStates, управление ролями
+    ├── bans.py             # Просмотр/снятие банов
+    ├── mocks.py            # Запись на мок
+    └── search.py           # /search, групповые команды
 ```
-
-### Ключевые компоненты
-
-| Модуль | Ответственность |
-|---|---|
-| `config.py` | Роли (`ROLE_USER/MENTOR/ADMIN`), стадии (`STAGE_FUNDAMENTAL` и т.д.) |
-| `db_utils.py` | `Database` класс, CRUD-функции, rate limiting / bans, фильтр `HasRole` |
-| `utils.py` | Клавиатуры (`kb`, `back_kb`), rate limit, formatters (`escape_md`, `format_material`) |
-| `handlers/common.py` | Общие команды, кнопка "Назад", меню админки |
-| `handlers/materials.py` | `MaterialStates` (FSM), CRUD материалов |
-| `handlers/events.py` | `EventStates` (FSM), CRUD событий, анонсы в группу |
-| `handlers/roles.py` | `RoleStates` (FSM), управление ролями, пагинация |
-| `handlers/bans.py` | Просмотр и снятие банов |
-| `handlers/mocks.py` | Запись на мок (календари) |
-| `handlers/search.py` | Поиск по материалам, групповые команды |
-| `main.py` | Подключение роутеров, middleware, polling с таймаутами |
-
-### Роли и доступ
-- **user** — материалы, события, запись на мок, buddy
-- **mentor** — то же + кнопка "⚙️ Админка"
-- **admin** — полный CRUD: материалы, события, роли, баны
-
-### Стадии материалов (STAGES в config.py)
-- `fundamental` → 📚 Фундаментальная теория
-- `practical_theory` → 🔧 Практическая теория
-- `practical_tasks` → 📝 Практические задания
-- `roadmap` → 🗺️ Roadmap (info)
 
 ---
 
-## 🗄️ Схема базы данных
+## ⚠️ Критически важно — состояние проекта (as is)
+
+### FSM States
+Каждый модуль имеет **свой** StatesGroup:
+- `MaterialStates` — в `materials.py` (menu, selecting_stage, input_title, etc)
+- `EventStates` — в `events.py` (menu, input_type, input_datetime, etc)
+- `RoleStates` — в `roles.py` (menu, input_users, selecting_role, etc)
+
+### Кнопка "Назад" (🔙)
+**Поведение:** Просто сбрасывает `state.clear()` и возвращает в главное меню.  
+**Где:** `handlers/common.py` → `back_handler()`  
+**Не делает:** никакой сложной навигации по истории состояний.
+
+### Права доступа
+- Используется фильтр `HasRole(ROLE_ADMIN)` из `db_utils.py`
+- `IsAuthorizedUser` есть в коде, но **не используется** в handlers
+- Основная проверка — `AuthMiddleware` (проверяет всех кроме /start)
+
+### БД и миграции
+- `db_utils.py` содержит `_migrate_user_roles()` и `_migrate_materials()` для совместимости со старыми схемами
+- Все функции БД — **async**, требуют `await`
+- Rate limiting (utils.py) и bans (db_utils.py) — разные системы
+
+### Чего НЕТ в проекте
+- ❌ Юнит-тестов — проверка только вручную через бота
+- ❌ `admin_module.py` — был разделён на handlers/*.py
+- ❌ `IsAdmin`, `IsMentor` фильтров — используется только `HasRole(ROLE_...)`
+
+---
+
+## 📝 Принципы работы AI-агента
+
+> Применяй эти принципы **по умолчанию**, если в промте не сказано иное.
+
+### 1. Аккуратность
+- Не ломать существующий функционал
+- Не удалять код без явного разрешения
+- Проверять импорты после изменений
+
+### 2. Спрашивать подтверждение
+Если решение вызывает сомнения — **остановиться и спросить**.  
+Примеры:
+- Изменение архитектуры
+- Удаление функционала
+- Изменение поведения кнопок/команд
+- Рефакторинг без явной просьбы
+
+### 3. Масштабные доработки
+Если доработка затрагивает несколько файлов или меняет логику:
+1. Объяснить план пользователю
+2. Получить подтверждение
+3. Только потом реализовывать
+
+### 4. Связанные изменения
+После правок проверить:
+- Остались ли неактуальные комментарии?
+- Остался ли неиспользуемый код?
+- Нужно ли обновить документацию?
+- Нужно ли обновить импорты в других файлах?
+
+### 5. Проверка целостности
+После изменений:
+- `python -c "from handlers import *"` — импорты работают?
+- `python -m py_compile file.py` — синтаксис корректен?
+- Нет ли дублирующихся определений?
+
+---
+
+## 🛠️ Типичные задачи
+
+### Добавить новый FSM-диалог
+1. Добавить StatesGroup в соответствующий модуль handlers/
+2. Добавить хендлеры с фильтрами состояний
+3. Использовать `HasRole(ROLE_ADMIN)` если нужна защита
+4. Кнопка "Назад" уже работает (сбросит в главное меню)
+
+### Добавить новую команду
+1. Выбрать подходящий модуль handlers/
+2. Добавить `@router.message(Command("..."))` или `@router.message(F.text == "...")`
+3. Добавить rate limit: `check_rate_limit(message.from_user.id)`
+4. Если нужна клавиатура — использовать `kb()` или `inline_kb()` из utils
+
+### Изменить БД
+1. Новые таблицы — в `Database.init_tables()`
+2. Миграции существующих — в отдельный метод `_migrate_*()`
+3. CRUD-функции — async, принимают/возвращают dict
+
+---
+
+## 🗄️ Схема БД
 
 ```sql
-user_roles(user_id, username, role, created_at)
+user_roles(id, user_id UNIQUE, username UNIQUE, role, created_at)
 materials(id, stage, title, link, description, created_at)
 events(id, event_type, event_datetime, link, announcement, created_at)
 bans(id, user_id, username, ban_level, banned_until, created_at)
-failed_attempts(id, user_id, username, attempt_count, last_attempt)
+failed_attempts(id, user_id UNIQUE, username UNIQUE, attempt_count, last_attempt)
 ```
-
----
-
-## ⚙️ Запуск и тестирование
-
-```bash
-# Установка зависимостей
-pip install -r requirements.txt
-
-# Настройка окружения
-cp .env.example .env
-# Задайте BOT_TOKEN и INITIAL_ADMIN_ID в .env
-
-# Запуск
-python main.py
-```
-
----
-
-## 📝 Советы для AI-агентов
-
-1. **FSM States:** У каждого модуля свои StatesGroup:
-   - `MaterialStates` в `materials.py`
-   - `EventStates` в `events.py`
-   - `RoleStates` в `roles.py`
-
-2. **Роутеры:** Каждый модуль создаёт `Router(name="...")` и регистрируется в `main.py`.
-
-3. **Права доступа:** Используйте фильтр `HasRole(ROLE_ADMIN)`:
-   ```python
-   @router.message(F.text == "📦 Управление материалами", HasRole(ROLE_ADMIN))
-   ```
-
-4. **Кнопка "Назад":** Централизована в `handlers/common.py` — просто сбрасывает state и возвращает в главное меню.
-
-5. **Rate limit:** Вызывайте `check_rate_limit(user_id)` в начале хендлеров.
-
-6. **БД:** ВСЕ функции асинхронные! Используйте `await`:
-   - `await get_user_role()` / `await add_material()` и т.д.
-
-7. **Клавиатуры:**
-   - `kb(buttons, back_button)` — ReplyKeyboardMarkup
-   - `inline_kb(buttons)` — InlineKeyboardMarkup
-   - `back_kb` — пустая клавиатура с кнопкой "Назад"
-   - `stage_kb` — клавиатура с разделами материалов
