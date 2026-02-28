@@ -22,6 +22,9 @@ router = Router(name="bans")
 @router.message(F.text == "🚫 Управление банами", HasRole(ROLE_ADMIN))
 async def bans_menu(message: Message, state: FSMContext):
     """Меню управления банами — показывает активные баны."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")

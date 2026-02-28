@@ -261,6 +261,9 @@ async def event_confirm_announce(message: Message, state: FSMContext, bot: Bot):
 @router.message(F.text == "✏️ Редактировать", EventStates.menu, HasRole(ROLE_ADMIN))
 async def event_edit_select(message: Message, state: FSMContext):
     """Выбор события для редактирования."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     events = await get_events()
     if not events:
         await message.answer("📭 Нет событий", reply_markup=events_menu_kb)

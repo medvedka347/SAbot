@@ -219,6 +219,9 @@ async def material_add_desc(message: Message, state: FSMContext):
 @router.message(F.text == "✏️ Редактировать", MaterialStates.menu, HasRole(ROLE_ADMIN))
 async def material_edit_select_stage(message: Message, state: FSMContext):
     """Выбор stage для редактирования."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     await state.set_state(MaterialStates.selecting_stage)
     await state.update_data(action="select_for_edit")
     await message.answer("✏️ Выберите раздел:", reply_markup=stage_kb)
@@ -294,6 +297,9 @@ async def material_edit_process(message: Message, state: FSMContext):
 @router.message(F.text == "🗑️ Удалить", MaterialStates.menu, HasRole(ROLE_ADMIN))
 async def material_delete_select_stage(message: Message, state: FSMContext):
     """Выбор stage для удаления."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     await state.set_state(MaterialStates.selecting_stage)
     await state.update_data(action="select_for_delete")
     await message.answer("🗑️ Выберите раздел:", reply_markup=stage_kb)
@@ -324,6 +330,9 @@ async def material_delete_callback(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "📊 Статистика", MaterialStates.menu, HasRole(ROLE_ADMIN))
 async def material_stats(message: Message, state: FSMContext):
     """Показ статистики по материалам."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     stats = await get_materials_stats()
     total = sum(stats.values())
     text = f"📊 *Всего материалов: {total}*\n\n" + "\n".join(

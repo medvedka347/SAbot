@@ -74,6 +74,9 @@ def build_users_pagination_keyboard(page: int, total_pages: int) -> InlineKeyboa
 @router.message(F.text == "👥 Управление ролями", HasRole(ROLE_ADMIN))
 async def roles_menu(message: Message, state: FSMContext):
     """Главное меню управления ролями."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        return
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
