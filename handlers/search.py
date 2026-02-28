@@ -62,6 +62,34 @@ async def search_handler(message: Message):
 
 # ==================== Group Commands ====================
 
+@router.message(Command("events"))
+async def group_events_handler(message: Message):
+    """Показать предстоящие события в группе (/events)."""
+    if message.reply_to_message:
+        return
+    if message.chat.type == "private":
+        return
+    
+    ok, muted = check_group_rate_limit(message.chat.id, "events")
+    if muted:
+        return
+    if not ok:
+        await message.reply("⏱️ Слишком быстро! Подождите минуту.")
+        return
+    
+    from db_utils import get_events
+    events = await get_events(upcoming_only=True)
+    if not events:
+        await message.reply("📭 Нет предстоящих событий")
+        return
+    
+    lines = ["📅 *Предстоящие события:*\n"]
+    for e in events:
+        lines.append(f"• *{e['type']}* — {e['datetime'][:10]}")
+    
+    await message.reply("\n".join(lines), parse_mode="Markdown")
+
+
 @router.message(Command("sabot_help"))
 async def group_help_handler(message: Message):
     """Справка по командам в группе (/sabot_help)."""
