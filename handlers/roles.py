@@ -76,6 +76,7 @@ async def roles_menu(message: Message, state: FSMContext):
     """Главное меню управления ролями."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
@@ -146,6 +147,7 @@ async def roles_show(message: Message, state: FSMContext):
     """Показать список всех пользователей (с пагинацией)."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     
     users = await get_all_users()
@@ -202,6 +204,7 @@ async def role_add_start(message: Message, state: FSMContext):
     """Начало добавления/изменения роли."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     await state.set_state(RoleStates.input_users)
     text = (
@@ -282,6 +285,7 @@ async def role_delete_start(message: Message, state: FSMContext):
     """Начало удаления пользователя."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     users = await get_all_users()
     if not users:

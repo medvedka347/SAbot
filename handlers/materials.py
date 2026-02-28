@@ -63,6 +63,7 @@ async def materials_menu(message: Message, state: FSMContext):
     """Главное меню управления материалами."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
@@ -79,6 +80,7 @@ async def material_select_stage(message: Message, state: FSMContext):
     """Выбор stage для просмотра материалов."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
     await state.update_data(action="show_list")
@@ -157,6 +159,7 @@ async def material_add_start(message: Message, state: FSMContext):
     """Начало добавления материала."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
     await state.update_data(action="add_material")
@@ -221,6 +224,7 @@ async def material_edit_select_stage(message: Message, state: FSMContext):
     """Выбор stage для редактирования."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
     await state.update_data(action="select_for_edit")
@@ -299,6 +303,7 @@ async def material_delete_select_stage(message: Message, state: FSMContext):
     """Выбор stage для удаления."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
     await state.update_data(action="select_for_delete")
@@ -332,6 +337,7 @@ async def material_stats(message: Message, state: FSMContext):
     """Показ статистики по материалам."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     stats = await get_materials_stats()
     total = sum(stats.values())

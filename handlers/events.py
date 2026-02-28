@@ -58,6 +58,7 @@ async def events_menu(message: Message, state: FSMContext):
     """Главное меню управления событиями."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
@@ -72,6 +73,10 @@ async def events_menu(message: Message, state: FSMContext):
 @router.message(F.text == "📖 Просмотреть", EventStates.menu, HasRole(ROLE_ADMIN))
 async def events_show_all(message: Message, state: FSMContext):
     """Показать все события."""
+    # Блокируем вызов через reply на чужое сообщение
+    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
+        return
     events = await get_events()
     if not events:
         text = "📭 Нет событий"
@@ -87,6 +92,7 @@ async def event_add_start(message: Message, state: FSMContext):
     """Начало добавления события."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     await state.set_state(EventStates.input_type)
     await message.answer("Введите тип (Вебинар, Митап, Квиз):", reply_markup=back_kb)
@@ -263,6 +269,7 @@ async def event_edit_select(message: Message, state: FSMContext):
     """Выбор события для редактирования."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     events = await get_events()
     if not events:
@@ -354,6 +361,7 @@ async def event_delete_select(message: Message, state: FSMContext):
     """Выбор события для удаления."""
     # Блокируем вызов через reply на чужое сообщение
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
+        await message.answer("❌ Нет прав.")
         return
     events = await get_events()
     if not events:
