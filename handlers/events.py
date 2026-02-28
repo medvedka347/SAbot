@@ -91,7 +91,7 @@ async def event_add_type(message: Message, state: FSMContext):
     """Получение типа события."""
     if not message.text:
         return
-    # Проверяем кнопку "Назад"
+    # Проверяем кнопку "Назад" — возврат в меню событий
     if "Назад" in message.text:
         await events_menu(message, state)
         return
@@ -108,9 +108,10 @@ async def event_add_datetime(message: Message, state: FSMContext):
     """Получение даты события."""
     if not message.text:
         return
-    # Проверяем кнопку "Назад"
+    # Проверяем кнопку "Назад" — возврат к вводу типа
     if "Назад" in message.text:
-        await events_menu(message, state)
+        await state.set_state(EventStates.input_type)
+        await message.answer("Введите тип (Вебинар, Митап, Квиз):", reply_markup=back_kb)
         return
     dt = message.text.strip()
     try:
@@ -130,9 +131,10 @@ async def event_add_link(message: Message, state: FSMContext):
     """Получение ссылки на событие."""
     if not message.text:
         return
-    # Проверяем кнопку "Назад"
+    # Проверяем кнопку "Назад" — возврат к вводу даты
     if "Назад" in message.text:
-        await events_menu(message, state)
+        await state.set_state(EventStates.input_datetime)
+        await message.answer("Введите дату `2024-12-31 18:00:00`:", parse_mode="Markdown", reply_markup=back_kb)
         return
     link = message.text.strip()
     if link.lower() == "нет":
@@ -150,9 +152,10 @@ async def event_add_announcement(message: Message, state: FSMContext):
     """Получение анонса и подготовка к сохранению."""
     if not message.text:
         return
-    # Проверяем кнопку "Назад"
+    # Проверяем кнопку "Назад" — возврат к вводу ссылки
     if "Назад" in message.text:
-        await events_menu(message, state)
+        await state.set_state(EventStates.input_link)
+        await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
         return
     ann = message.text.strip()
     if len(ann) > 2000:
@@ -205,9 +208,10 @@ async def event_confirm_announce(message: Message, state: FSMContext, bot: Bot):
     """Подтверждение размещения анонса в группе."""
     if not message.text:
         return
-    # Проверяем кнопку "Назад"
+    # Проверяем кнопку "Назад" — возврат к вводу анонса
     if "Назад" in message.text:
-        await events_menu(message, state)
+        await state.set_state(EventStates.input_announcement)
+        await message.answer("Введите анонс:", reply_markup=back_kb)
         return
     
     data = await state.get_data()
@@ -321,7 +325,7 @@ async def event_edit_process(message: Message, state: FSMContext):
     """Обработка редактирования события."""
     if not message.text:
         return
-    # Проверяем кнопку "Назад"
+    # Проверяем кнопку "Назад" — возврат в меню событий
     if "Назад" in message.text:
         await events_menu(message, state)
         return
