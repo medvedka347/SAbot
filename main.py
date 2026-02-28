@@ -2,18 +2,23 @@ import asyncio
 import logging
 import os
 import sys
-from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
+from aiogram import Bot, Dispatcher
+from aiogram.types import ErrorEvent
 
-from config import BOT_TOKEN, DB_NAME, ROLE_ADMIN, ROLE_MENTOR
-from db_utils import init_db, get_user_role, setup_initial_users, get_ban_status, record_failed_attempt, clear_failed_attempts, cleanup_expired_bans, update_user_id_by_username, get_user_by_username
-from admin_module import register_handlers, mentor_kb, admin_kb, user_kb, mock_kb, search_handler, IsAuthorizedUser, check_rate_limit
+from config import BOT_TOKEN, DB_NAME
+from db_utils import (
+    init_db, setup_initial_users, cleanup_expired_bans, AuthMiddleware
+)
+from utils import error_handler
+
+# Импортируем роутеры из модулей handlers
+from handlers import common, materials, events, roles, bans, mocks, search
 
 logging.basicConfig(level=logging.INFO)
 
 # Защита от двойного запуска
 PID_FILE = "/tmp/sabot_bot.pid"
+
 
 def check_single_instance():
     """Проверяем что бот не запущен дважды."""
@@ -28,6 +33,7 @@ def check_single_instance():
     with open(PID_FILE, 'w') as f:
         f.write(str(os.getpid()))
 
+
 def remove_pid_file():
     """Удаляем PID файл при выходе."""
     try:
@@ -35,182 +41,6 @@ def remove_pid_file():
             os.remove(PID_FILE)
     except:
         pass
-
-
-async def start_handler(message: Message):
-    """Стартовый обработчик с проверкой бана."""
-    # Игнорируем /start в группах (не в ЛС)
-    if message.chat.type != "private":
-        return
-    
-    user_id = message.from_user.id
-    username = message.from_user.username
-    
-    # Проверяем бан (сначала чистим старые)
-    await cleanup_expired_bans()
-    ban = await get_ban_status(user_id=user_id, username=username)
-    if ban:
-        ban_level = ban['ban_level']
-        
-        ban_text = {
-            1: "5 минут",
-            2: "10 минут", 
-            3: "1 месяц"
-        }.get(ban_level, "некоторое время")
-        
-        await message.answer(
-            f"❌ *Доступ временно заблокирован*\n\n"
-            f"Причина: превышено количество попыток авторизации\n"
-            f"Длительность: {ban_text}\n\n"
-            f"Попробуйте позже или обратитесь к администратору.",
-            parse_mode="Markdown"
-        )
-        return
-    
-    # Проверяем роль
-    role = await get_user_role(user_id=user_id, username=username)
-    
-    if not role:
-        # Записываем неудачную попытку
-        new_ban = await record_failed_attempt(user_id=user_id, username=username)
-        
-        if new_ban:
-            # Применен новый бан
-            ban_until = new_ban['banned_until']
-            await message.answer(
-                f"❌ *Доступ запрещен*\n\n"
-                f"3 неудачные попытки авторизации.\n"
-                f"Вы заблокированы до: `{ban_until.strftime('%Y-%m-%d %H:%M:%S')}`",
-                parse_mode="Markdown"
-            )
-        else:
-            attempts = 3 - (new_ban.get('remaining', 2) if new_ban else 2)
-            await message.answer(
-                f"❌ У вас нет доступа к боту.\n\n"
-                f"⚠️ После 3 неудачных попыток вы получите временный бан."
-            )
-        return
-    
-    # Успешная авторизация - очищаем неудачные попытки
-    await clear_failed_attempts(user_id=user_id, username=username)
-    
-    # Если пользователь был добавлен по username без ID - подхватываем его ID
-    if username:
-        user_from_db = await get_user_by_username(username)
-        if user_from_db and user_from_db.get("user_id") is None:
-            await update_user_id_by_username(username, user_id)
-            logging.info(f"Подхвачен user_id {user_id} для @{username} при первой авторизации")
-    
-    welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
-    
-    # Выбираем клавиатуру по роли
-    if role == ROLE_ADMIN:
-        kb = admin_kb
-    elif role == ROLE_MENTOR:
-        kb = mentor_kb
-    else:
-        kb = user_kb
-    
-    # Клавиатура только в ЛС, в группах не отправляем
-    markup = kb if message.chat.type == "private" else None
-    await message.answer(welcome, parse_mode="Markdown", reply_markup=markup)
-
-
-async def booking_handler(message: Message):
-    """Обработчик записи на мок."""
-    ok, wait = check_rate_limit(message.from_user.id)
-    if not ok:
-        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
-        return
-    # Показываем детальную инструкцию и меню выбора ментора
-    await message.answer(
-        "📋 *Запись на мок*\n\n"
-        "У нас проводится 2-4 мока\n\n"
-        "⚠️ *Моки необходимо проходить после составления легенды!*\n\n"
-        "Моки можно проходить в любом порядке, снизу только рекомендованный порядок.\n"
-        "Если кто-то из собеседующих недоступен, то идите к другому, а потом идите к недоступному когда он станет доступен.\n\n"
-        "*Действия перед моком:*\n"
-        "1️⃣ Предупредить собеседующего (чисто на всякий случай)\n"
-        "2️⃣ Скинуть резюме собеседующему\n\n"
-        "_Если очередь на мок больше 3 дней, то проверьте доступность других собеседующих._\n"
-        "_Если очередь на мок больше 3 дней у всех, то напишите в ЛС. Найду слот_\n\n"
-        '*Порядок "Первый, второй, третий, четвёртый" не является порядком, это просто список. Порядок может быть любым. Это написано для удобства структуры и читаемости*',
-        parse_mode="Markdown",
-        reply_markup=(mock_kb if message.chat.type == "private" else None)
-    )
-
-
-async def mock_select_handler(message: Message):
-    """Обработчик выбора ментора для мока."""
-    ok, wait = check_rate_limit(message.from_user.id)
-    if not ok:
-        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
-        return
-    mentor = message.text.replace("👤 ", "")
-    
-    if mentor == "Руслан":
-        await message.answer(
-            f"👤 *Руслан*\n\n"
-            f"[Записаться на мок](https://cal.com/akhmadishin/мок)\n\n"
-            f"Нажмите на ссылку для выбора удобного времени.",
-            parse_mode="Markdown",
-            reply_markup=(user_kb if message.chat.type == "private" else None)
-        )
-    elif mentor == "Регина":
-        await message.answer(
-            f"👤 *Регина*\n\n"
-            f"[Записаться на мок](https://cal.com/ocpocmak/mock)\n\n"
-            f"Нажмите на ссылку для выбора удобного времени.",
-            parse_mode="Markdown",
-            reply_markup=(user_kb if message.chat.type == "private" else None)
-        )
-    elif mentor in ["Влад", "Иван"]:
-        await message.answer(
-            f"👤 *{mentor}*\n\n"
-            f"_Запись пока недоступна_\n\n"
-            f"Выберите другого ментора или попробуйте позже.",
-            parse_mode="Markdown",
-            reply_markup=mock_kb
-        )
-
-
-async def help_handler(message: Message):
-    """Обработчик /help — список доступных функций по роли."""
-    ok, wait = check_rate_limit(message.from_user.id)
-    if not ok:
-        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
-        return
-    user_id = message.from_user.id
-    username = message.from_user.username
-    role = await get_user_role(user_id=user_id, username=username)
-
-    common = (
-        "📚 *Материалы* — учебные материалы по разделам\n"
-        "📅 *События комьюнити* — предстоящие вебинары и митапы\n"
-        "⏱️ *Записаться на мок* — запись на пробное собеседование\n"
-        "🤝 *Buddy* — система взаимопомощи\n"
-        "🔍 `/search <запрос>` — поиск по материалам"
-    )
-
-    if role == ROLE_ADMIN:
-        extra = (
-            "\n\n👑 *Администратор:*\n"
-            "📦 Управление материалами (CRUD)\n"
-            "👥 Управление ролями пользователей\n"
-            "📋 Управление событиями\n"
-            "🚫 Управление банами — просмотр и снятие банов"
-        )
-    elif role == ROLE_MENTOR:
-        extra = "\n\n🎓 *Ментор:*\n⚙️ Панель ментора"
-    elif role:
-        extra = ""
-    else:
-        extra = "\n\n❌ У вас нет доступа. Обратитесь к администратору."
-
-    await message.answer(
-        f"ℹ️ *Доступные функции:*\n\n{common}{extra}",
-        parse_mode="Markdown"
-    )
 
 
 async def periodic_cleanup():
@@ -245,13 +75,21 @@ async def main():
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    dp.message.register(start_handler, CommandStart())
-    dp.message.register(help_handler, Command("help"))
-    dp.message.register(search_handler, Command("search"))
-    dp.message.register(booking_handler, F.text.in_(["⏱️ Записаться на мок", "Записаться на мок"]), IsAuthorizedUser())
-    dp.message.register(mock_select_handler, F.text.in_(["👤 Влад", "👤 Регина", "👤 Руслан", "👤 Иван"]), IsAuthorizedUser())
+    # Подключаем middleware авторизации (проверяет всех, кроме /start)
+    dp.message.middleware(AuthMiddleware())
+    dp.callback_query.middleware(AuthMiddleware())
     
-    register_handlers(dp)
+    # Подключаем роутеры (порядок важен - fallback должен быть последним)
+    dp.include_router(search.router)      # /search, /material (group), /sabot_help
+    dp.include_router(materials.router)   # Материалы (CRUD + public)
+    dp.include_router(events.router)      # События (CRUD + public)
+    dp.include_router(roles.router)       # Управление ролями
+    dp.include_router(bans.router)        # Управление банами
+    dp.include_router(mocks.router)       # Запись на мок
+    dp.include_router(common.router)      # /start, /help, ⚙️ Админка, 🔙 Назад, 🤝 Buddy, fallback
+    
+    # Глобальный обработчик ошибок
+    dp.errors.register(error_handler)
 
     await bot.delete_webhook(drop_pending_updates=True)
     cleanup_task = asyncio.create_task(periodic_cleanup())

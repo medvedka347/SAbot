@@ -3,8 +3,9 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from aiogram.types import Message
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
-from config import DB_NAME, STAGES
+from config import DB_NAME, STAGES, ROLE_ADMIN
 
 
 class Database:
@@ -592,11 +593,53 @@ async def get_active_bans() -> list[dict]:
     ]
 
 
-# ==================== ФИЛЬТРЫ ====================
+# ==================== MIDDLEWARE & FILTERS ====================
+
+class AuthMiddleware(BaseMiddleware):
+    """Middleware для проверки авторизации один раз на сообщение.
+    
+    Проверяет, есть ли пользователь в БД. Если да — сохраняет роль в data.
+    Если нет — блокирует доступ.
+    """
+    async def __call__(self, handler, event, data):
+        # Пропускаем не-сообщения (callback_query и др.)
+        if not hasattr(event, 'from_user'):
+            return await handler(event, data)
+            
+        user_id = event.from_user.id
+        username = event.from_user.username
+        
+        # Проверяем роль один раз
+        role = await get_user_role(user_id=user_id, username=username)
+        
+        if not role:
+            # Неавторизованный — отправляем сообщение и не пропускаем
+            try:
+                if hasattr(event, 'message') and event.message:
+                    # Для callback_query отправляем через message
+                    await event.message.answer("❌ У вас нет доступа к боту. Обратитесь к администратору.")
+                elif hasattr(event, 'answer'):
+                    # Для обычных сообщений
+                    await event.answer("❌ У вас нет доступа к боту. Обратитесь к администратору.")
+            except Exception:
+                pass  # Не можем отправить — просто молча блокируем
+            return
+        
+        # Сохраняем роль для использования в хендлерах
+        data["user_role"] = role
+        data["user_id"] = user_id
+        data["username"] = username
+        
+        return await handler(event, data)
+
 
 class IsAuthorizedUser:
-    """Проверка авторизации по ID или username."""
+    """Проверка авторизации по ID или username (для совместимости).
+    Теперь используется как fallback, middleware делает основную работу.
+    """
     async def __call__(self, message: Message) -> bool:
+        # Если middleware уже проверила — пропускаем
+        # Это fallback для callback_query и других событий
         user_id = message.from_user.id
         username = message.from_user.username
         
@@ -607,6 +650,24 @@ class IsAuthorizedUser:
             return True
         
         return False
+
+
+class HasRole:
+    """Фильтр проверки роли с использованием кешированного значения из middleware."""
+    def __init__(self, role: str):
+        self.role = role
+    
+    async def __call__(self, message: Message, **data) -> bool:
+        # Сначала проверяем кеш из middleware (быстро)
+        user_role = data.get("user_role")
+        
+        # Если кеша нет (например, callback_query), берём из БД
+        if user_role is None:
+            user_id = message.from_user.id
+            username = message.from_user.username
+            user_role = await get_user_role(user_id=user_id, username=username)
+        
+        return user_role == self.role
 
 
 # ==================== EVENTS ====================
