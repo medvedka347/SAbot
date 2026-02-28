@@ -7,16 +7,24 @@
 
 ---
 
-## 📁 Архитектура
+## 📁 Архитектура (модульная)
 
 ```
 SABot/
-├── main.py           # Точка входа: инициализация бота, регистрация хендлеров, запуск polling
-├── config.py         # Константы: токен, имя БД, роли (user/mentor/admin), стадии материалов
-├── db_utils.py       # Вся работа с БД: CRUD для users, materials, events, bans
-├── admin_module.py   # FSM-обработчики, клавиатуры, логика команд
-├── requirements.txt  # Зависимости Python
-└── .env.example      # Шаблон переменных окружения
+├── main.py                 # Точка входа: инициализация бота, роутеры, polling
+├── config.py               # Константы: токен, роли, стадии материалов
+├── db_utils.py             # Вся работа с БД: CRUD, фильтры, bans
+├── utils.py                # Клавиатуры, rate limit, formatters, helpers
+│
+└── handlers/               # Модули хендлеров (aiogram Router)
+    ├── __init__.py
+    ├── common.py           # /start, /help, ⚙️ Админка, 🔙 Назад, 🤝 Buddy
+    ├── materials.py        # CRUD материалов + публичный просмотр
+    ├── events.py           # CRUD событий + анонсы в группу
+    ├── roles.py            # Управление ролями пользователей
+    ├── bans.py             # Просмотр и снятие банов
+    ├── mocks.py            # Запись на мок-интервью
+    └── search.py           # /search, /material (group), /sabot_help
 ```
 
 ### Ключевые компоненты
@@ -24,14 +32,21 @@ SABot/
 | Модуль | Ответственность |
 |---|---|
 | `config.py` | Роли (`ROLE_USER/MENTOR/ADMIN`), стадии (`STAGE_FUNDAMENTAL` и т.д.) |
-| `db_utils.py` | `Database` класс, CRUD-функции, rate limiting / bans, фильтры `IsAuthorizedUser` |
-| `admin_module.py` | `Form` (FSM), клавиатуры (`user_kb`, `admin_kb`...), все async-обработчики |
-| `main.py` | `Bot` + `Dispatcher`, регистрация хендлеров, `asyncio.run(main())` |
+| `db_utils.py` | `Database` класс, CRUD-функции, rate limiting / bans, фильтр `HasRole` |
+| `utils.py` | Клавиатуры (`kb`, `back_kb`), rate limit, formatters (`escape_md`, `format_material`) |
+| `handlers/common.py` | Общие команды, кнопка "Назад", меню админки |
+| `handlers/materials.py` | `MaterialStates` (FSM), CRUD материалов |
+| `handlers/events.py` | `EventStates` (FSM), CRUD событий, анонсы в группу |
+| `handlers/roles.py` | `RoleStates` (FSM), управление ролями, пагинация |
+| `handlers/bans.py` | Просмотр и снятие банов |
+| `handlers/mocks.py` | Запись на мок (календари) |
+| `handlers/search.py` | Поиск по материалам, групповые команды |
+| `main.py` | Подключение роутеров, middleware, polling с таймаутами |
 
 ### Роли и доступ
 - **user** — материалы, события, запись на мок, buddy
 - **mentor** — то же + кнопка "⚙️ Админка"
-- **admin** — полный CRUD: материалы, события, роли пользователей, управление банами
+- **admin** — полный CRUD: материалы, события, роли, баны
 
 ### Стадии материалов (STAGES в config.py)
 - `fundamental` → 📚 Фундаментальная теория
@@ -67,90 +82,63 @@ cp .env.example .env
 python main.py
 ```
 
-Тестов нет — проверяйте поведение вручную через реального бота или через `db_utils.py` напрямую.
-
 ---
 
-## 🚀 5 Предложенных и реализованных улучшений
-
-### 1. 🐛 Исправлен баг расчёта времени бана (`apply_ban` в `db_utils.py`)
-**Проблема:** `now.replace(minute=now.minute + 5)` вызывало `ValueError` при `minute >= 55`.  
-**Решение:** заменено на `now + timedelta(minutes=5)` / `timedelta(days=30)`.
-
-### 2. 🔍 Поиск по материалам (`/search`)
-**Что:** команда `/search <запрос>` ищет по названию и описанию материалов.  
-**Где:** `db_utils.py` → `search_materials()`, `admin_module.py` → `search_handler()`, `main.py` → регистрация.  
-**Польза:** когда материалов много, находить нужное стало значительно быстрее.
-
-### 3. 🚫 Панель управления банами для админа
-**Что:** новый раздел "🚫 Управление банами" в меню администратора.  
-**Где:** `admin_module.py` → `bans_menu()`, `bans_list()`, `ban_unban_callback()`.  
-**Польза:** раньше разбанить пользователя можно было только через код; теперь — через бота.
-
-### 4. ⏰ Периодическая очистка истёкших банов
-**Что:** фоновая `asyncio`-задача, которая вызывает `cleanup_expired_bans()` каждый час.  
-**Где:** `main.py` → `periodic_cleanup()` + `asyncio.create_task()` при старте.  
-**Польза:** истёкшие баны удаляются автоматически, а не только при `/start`.
-
-### 5. ❓ Команда `/help` с учётом роли пользователя
-**Что:** команда `/help` показывает список доступных функций в зависимости от роли.  
-**Где:** `main.py` → `help_handler()` + регистрация через `CommandHelp`.  
-**Польза:** новые пользователи сразу понимают, что умеет бот.
-
----
-
-## 🔧 Критические исправления стабильности (2026-02-22)
+## 🔧 Критические исправления стабильности
 
 ### 1. 🗄️ Переход на aiosqlite (async SQLite)
-**Проблема:** Синхронные вызовы `sqlite3` из async кода блокировали event loop, вызывая "зависания" бота.  
-**Решение:** Полный переход на `aiosqlite` — все функции БД теперь async/await.  
-**Файлы:** `db_utils.py`, `admin_module.py`, `main.py`, `requirements.txt`
+**Проблема:** Синхронные вызовы `sqlite3` из async кода блокировали event loop.
+**Решение:** Полный переход на `aiosqlite` — все функции БД теперь async/await.
+**Файлы:** `db_utils.py`, все `handlers/*.py`
 
 ### 2. 🛡️ Глобальный обработчик ошибок
-**Проблема:** Необработанные исключения в хендлерах могли "ломать" бота.  
-**Решение:** Добавлен `error_handler()` в `register_handlers()` — перехватывает все ошибки и уведомляет пользователя.  
-**Где:** `admin_module.py`
+**Где:** `main.py` → `dp.errors.register(error_handler)`
 
 ### 3. ⏱️ Таймауты для polling
-**Проблема:** `dp.start_polling(bot)` без таймаутов мог зависать при сетевых проблемах.  
-**Решение:** Добавлены параметры `polling_timeout=30`, `timeout=30`, `error_sleep=5.0`.  
-**Где:** `main.py`
+**Где:** `main.py` → `polling_timeout=30`, `timeout=30`
 
 ### 4. 🧹 Очистка rate limits
-**Проблема:** Словарь `_rate_limits` рос бесконечно, вызывая утечку памяти.  
-**Решение:** Автоматическая очистка записей старше 1 часа при превышении 10k записей.  
-**Где:** `admin_module.py` → `check_rate_limit()`
+**Где:** `utils.py` → `check_rate_limit()` — автоочистка старых записей
 
 ---
 
-## 🔧 Оптимизации для 150 concurrent users (2026-02-22)
+## 🔧 Оптимизации для 150 concurrent users
 
 ### 1. 🗄️ SQLite WAL Mode
-**Проблема:** SQLite блокировался при конкурентных запросах.  
-**Решение:** WAL (Write-Ahead Logging) режим + asyncio.Lock для сериализации записей.  
-**Результат:** Чтения не блокируют друг друга, записи сериализованы.  
+**Решение:** WAL (Write-Ahead Logging) + asyncio.Lock для сериализации записей.
 **Где:** `db_utils.py` → `Database` class
 
 ### 2. 🔒 Защита от двойного запуска
-**Проблема:** При ошибке systemd мог запустить второй инстанс бота.  
-**Решение:** PID-файл с проверкой процесса.  
-**Где:** `main.py` → `check_single_instance()`
+**Где:** `main.py` → `check_single_instance()` (PID-файл)
 
 ### 3. 🛑 Graceful Shutdown
-**Проблема:** При рестарте активные запросы обрывались.  
-**Решение:** Обработка SIGTERM/SIGINT, корректное завершение polling.  
-**Где:** `main.py` → `signal_handler()`
+**Где:** `main.py` → обработка SIGTERM/SIGINT
 
 ---
 
 ## 📝 Советы для AI-агентов
 
-1. **FSM:** при добавлении нового многошагового диалога — добавить `State` в `Form` (`admin_module.py`) и зарегистрировать хендлеры в `register_handlers()`.
-2. **БД (aiosqlite):** ВСЕ функции БД асинхронные! Используйте `await`:
-   - `await db.execute()` / `await db.fetchone()` / `await db.fetchall()`
-   - `await get_user_role()` / `await get_all_users()` / `await add_material()` и т.д.
-3. **Фильтры:** `IsAuthorizedUser`, `IsAdmin`, `IsMentor` теперь async — используйте `async def __call__`.
-3. **Клавиатуры:** вспомогательная функция `kb(buttons, back_button)` строит `ReplyKeyboardMarkup`. Для inline — `inline_kb(buttons)`.
-4. **Роли:** всегда проверяйте роль через `get_user_role(user_id=..., username=...)` — поддерживает оба идентификатора.
-5. **Rate limit:** в начале каждого хендлера вызывайте `check_rate_limit(message.from_user.id)`.
-6. **Безопасность:** не добавляйте имена столбцов напрямую в SQL-строки (используйте `frozenset` для whitelist, как в `update_material` / `update_event`).
+1. **FSM States:** У каждого модуля свои StatesGroup:
+   - `MaterialStates` в `materials.py`
+   - `EventStates` в `events.py`
+   - `RoleStates` в `roles.py`
+
+2. **Роутеры:** Каждый модуль создаёт `Router(name="...")` и регистрируется в `main.py`.
+
+3. **Права доступа:** Используйте фильтр `HasRole(ROLE_ADMIN)`:
+   ```python
+   @router.message(F.text == "📦 Управление материалами", HasRole(ROLE_ADMIN))
+   ```
+
+4. **Кнопка "Назад":** Централизована в `handlers/common.py` — просто сбрасывает state и возвращает в главное меню.
+
+5. **Rate limit:** Вызывайте `check_rate_limit(user_id)` в начале хендлеров.
+
+6. **БД:** ВСЕ функции асинхронные! Используйте `await`:
+   - `await get_user_role()` / `await add_material()` и т.д.
+
+7. **Клавиатуры:**
+   - `kb(buttons, back_button)` — ReplyKeyboardMarkup
+   - `inline_kb(buttons)` — InlineKeyboardMarkup
+   - `back_kb` — пустая клавиатура с кнопкой "Назад"
+   - `stage_kb` — клавиатура с разделами материалов
