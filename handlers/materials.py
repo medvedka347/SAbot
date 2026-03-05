@@ -122,7 +122,7 @@ async def handle_stage_selection_admin(message: Message, state: FSMContext):
     
     # Добавление материала
     if action == "add_material":
-        await state.update_data(stage=stage)
+        await state.update_data(stage=stage, _prev_state="selecting_stage")
         await state.set_state(MaterialStates.input_title)
         await message.answer("Введите название:", reply_markup=back_kb)
         return
@@ -139,7 +139,7 @@ async def handle_stage_selection_admin(message: Message, state: FSMContext):
             await message.answer("📭 Пусто", reply_markup=stage_kb)
             return
         
-        await state.update_data(stage=stage)
+        await state.update_data(stage=stage, _prev_state="selecting_stage")
         await state.set_state(MaterialStates.selecting_item)
         
         kb_inline = inline_kb([
@@ -175,7 +175,7 @@ async def material_add_title(message: Message, state: FSMContext):
         await message.answer("❌ Название слишком длинное (макс 200 символов)")
         return
     
-    await state.update_data(title=message.text)
+    await state.update_data(title=message.text, _prev_state="input_title")
     await state.set_state(MaterialStates.input_link)
     await message.answer("Введите ссылку (https://...):", reply_markup=back_kb)
 
@@ -193,7 +193,7 @@ async def material_add_link(message: Message, state: FSMContext):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
     
-    await state.update_data(link=link)
+    await state.update_data(link=link, _prev_state="input_link")
     await state.set_state(MaterialStates.input_desc)
     await message.answer("Введите описание (или 'пропустить'):", reply_markup=back_kb)
 
@@ -247,7 +247,7 @@ async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
         await safe_edit_text(callback, "❌ Не найдено")
         return
     
-    await state.update_data(edit_id=mat_id, edit_item=mat)
+    await state.update_data(edit_id=mat_id, edit_item=mat, _prev_state="selecting_item")
     await state.set_state(MaterialStates.editing)
     
     await safe_edit_text(

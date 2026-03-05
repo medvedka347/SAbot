@@ -23,7 +23,7 @@ from db_utils import (
 )
 from utils import (
     check_rate_limit, kb, user_kb, mentor_kb, admin_kb,
-    get_main_keyboard
+    get_main_keyboard, back_kb
 )
 
 router = Router(name="common")
@@ -174,9 +174,67 @@ async def admin_handler(message: Message, state: FSMContext):
 
 # ==================== Back Button ====================
 
+# Маппинг строковых ключей состояний для навигации назад
+STATE_MAP = {
+    # Materials
+    "selecting_stage": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.selecting_stage,
+    "selecting_stage_public": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.selecting_stage_public,
+    "input_title": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.input_title,
+    "input_link": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.input_link,
+    "input_desc": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.input_desc,
+    "selecting_item": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.selecting_item,
+    "editing": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.editing,
+    # Events
+    "input_type": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.input_type,
+    "input_datetime": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.input_datetime,
+    "input_link_evt": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.input_link,
+    "input_announcement": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.input_announcement,
+    "confirm_announce": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.confirm_announce,
+    # Roles
+    "input_users": lambda: __import__('handlers.roles', fromlist=['RoleStates']).RoleStates.input_users,
+    "selecting_role": lambda: __import__('handlers.roles', fromlist=['RoleStates']).RoleStates.selecting_role,
+    "selecting_user_to_delete": lambda: __import__('handlers.roles', fromlist=['RoleStates']).RoleStates.selecting_user_to_delete,
+}
+
+
 @router.message(F.text.in_(["🔙 Назад", "Назад"]))
 async def back_handler(message: Message, state: FSMContext):
-    """Обработчик 'Назад' - просто возвращает в главное меню."""
+    """Обработчик 'Назад' - возвращает на предыдущий шаг или в главное меню."""
+    data = await state.get_data()
+    prev_state_key = data.get("_prev_state")
+    
+    if prev_state_key and prev_state_key in STATE_MAP:
+        # Возврат на предыдущий шаг
+        try:
+            prev_state = STATE_MAP[prev_state_key]()
+            await state.set_state(prev_state)
+            # Убираем _prev_state, чтобы не зациклиться
+            await state.update_data(_prev_state=None)
+            
+            # Формируем сообщение в зависимости от состояния
+            back_messages = {
+                "selecting_stage": "Выберите раздел:",
+                "selecting_stage_public": "Выберите раздел:",
+                "input_title": "Введите название:",
+                "input_link": "Введите ссылку (https://...):",
+                "input_desc": "Введите описание (или 'пропустить'):",
+                "selecting_item": "Выберите из списка:",
+                "editing": "Отправьте новые данные (используйте '.' для пропуска):",
+                "input_type": "Введите тип (Вебинар, Митап, Квиз):",
+                "input_datetime": "Введите дату `2024-12-31 18:00:00`:",
+                "input_link_evt": "Введите ссылку (или 'нет'):",
+                "input_announcement": "Введите анонс:",
+                "input_users": "Введите пользователей (ID или @username):",
+                "selecting_role": "Выберите роль:",
+            }
+            msg_text = back_messages.get(prev_state_key, "Вернулся на шаг назад.")
+            await message.answer(f"🔙 {msg_text}", reply_markup=back_kb)
+            return
+        except Exception:
+            # При ошибке - в главное меню
+            pass
+    
+    # Нет истории или ошибка - в главное меню
     await state.clear()
     role = await get_user_role(user_id=message.from_user.id, username=message.from_user.username)
     welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"

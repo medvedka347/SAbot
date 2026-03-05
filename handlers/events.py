@@ -106,7 +106,7 @@ async def event_add_type(message: Message, state: FSMContext):
     if len(message.text) > 100:
         await message.answer("❌ Тип события слишком длинный (макс 100 символов)")
         return
-    await state.update_data(event_type=message.text)
+    await state.update_data(event_type=message.text, _prev_state="input_type")
     await state.set_state(EventStates.input_datetime)
     await message.answer("Введите дату `2024-12-31 18:00:00`:", parse_mode="Markdown", reply_markup=back_kb)
 
@@ -124,7 +124,7 @@ async def event_add_datetime(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Формат: `2024-12-31 18:00:00`", parse_mode="Markdown")
         return
-    await state.update_data(event_datetime=dt)
+    await state.update_data(event_datetime=dt, _prev_state="input_datetime")
     await state.set_state(EventStates.input_link)
     await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
 
@@ -140,7 +140,7 @@ async def event_add_link(message: Message, state: FSMContext):
     elif not (link.startswith('http://') or link.startswith('https://')):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
-    await state.update_data(event_link=link)
+    await state.update_data(event_link=link, _prev_state="input_link_evt")
     await state.set_state(EventStates.input_announcement)
     await message.answer("Введите анонс:", reply_markup=back_kb)
 
@@ -182,6 +182,7 @@ async def event_add_announcement(message: Message, state: FSMContext):
         return
     
     # Спрашиваем про размещение анонса
+    await state.update_data(_prev_state="input_announcement")
     await state.set_state(EventStates.confirm_announce)
     preview = (
         f"📅 *{event_type}*\n"
@@ -301,7 +302,7 @@ async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
         await safe_edit_text(callback, "❌ Не найдено")
         return
     
-    await state.update_data(edit_id=ev_id, edit_ev=ev)
+    await state.update_data(edit_id=ev_id, edit_ev=ev, _prev_state="selecting_item")
     await state.set_state(EventStates.editing)
     await safe_edit_text(
         callback,

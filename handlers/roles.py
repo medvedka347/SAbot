@@ -206,6 +206,7 @@ async def role_add_start(message: Message, state: FSMContext):
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
         await message.answer("❌ Нет прав.")
         return
+    await state.update_data(_prev_state="menu")
     await state.set_state(RoleStates.input_users)
     text = (
         "Введите пользователей для назначения роли:\n\n"
@@ -247,7 +248,7 @@ async def role_receive_users(message: Message, state: FSMContext):
     if len(users) > 5:
         preview.append(f"... и ещё {len(users) - 5}")
     
-    await state.update_data(users_to_assign=users)
+    await state.update_data(users_to_assign=users, _prev_state="input_users")
     await state.set_state(RoleStates.selecting_role)
     
     await message.answer(
