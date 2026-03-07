@@ -22,7 +22,7 @@ from db_utils import (
     get_user_by_username, update_user_id_by_username
 )
 from utils import (
-    check_rate_limit, kb, user_kb, mentor_kb, admin_kb,
+    check_rate_limit, kb as kb_builder, user_kb, mentor_kb, admin_kb,
     get_main_keyboard, back_kb
 )
 
@@ -94,13 +94,13 @@ async def start_handler(message: Message):
     
     # Выбираем клавиатуру по роли
     if role == ROLE_ADMIN:
-        kb = admin_kb
+        main_kb = admin_kb
     elif role == ROLE_MENTOR:
-        kb = mentor_kb
+        main_kb = mentor_kb
     else:
-        kb = user_kb
+        main_kb = user_kb
     
-    markup = kb if message.chat.type == "private" else None
+    markup = main_kb if message.chat.type == "private" else None
     await message.answer(welcome, parse_mode="Markdown", reply_markup=markup)
 
 
@@ -166,8 +166,8 @@ async def admin_handler(message: Message, state: FSMContext):
     text_map = {ROLE_ADMIN: "🔧 Панель администратора", ROLE_MENTOR: "🎓 Панель ментора"}
     
     if role in kb_map:
-        kb = kb_map[role] if message.chat.type == "private" else None
-        await message.answer(text_map[role], reply_markup=kb)
+        panel_kb = kb_map[role] if message.chat.type == "private" else None
+        await message.answer(text_map[role], reply_markup=panel_kb)
     else:
         await message.answer("❌ Нет доступа.")
 
