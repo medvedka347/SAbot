@@ -364,7 +364,7 @@ async def public_materials_select(message: Message, state: FSMContext):
         "• 📚 Фундаментальная теория\n"
         "• 🔧 Практическая теория\n"
         "• 📝 Практические задания\n"
-        "• 🗺️ Roadmap (info)",
+        "• 🗺️ Прочие гайды",
         parse_mode="Markdown",
         reply_markup=stage_kb
     )

@@ -23,7 +23,7 @@ STAGES = {
     STAGE_FUNDAMENTAL: "📚 Фундаментальная теория",
     STAGE_PRACTICAL_THEORY: "🔧 Практическая теория",
     STAGE_PRACTICAL_TASKS: "📝 Практические задания",
-    STAGE_ROADMAP: "🗺️ Roadmap (info)",
+    STAGE_ROADMAP: "🗺️ Прочие гайды",
 }
 
 # --- Настройки группы для анонсов ---
