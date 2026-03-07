@@ -203,6 +203,10 @@ async def back_handler(message: Message, state: FSMContext):
     data = await state.get_data()
     prev_state_key = data.get("_prev_state")
     
+    # DEBUG: логируем что пришло
+    logging.info(f"BACK_HANDLER: prev_state_key={prev_state_key!r}, type={type(prev_state_key)}")
+    logging.info(f"BACK_HANDLER: data={data}")
+    
     if prev_state_key and prev_state_key in STATE_MAP:
         # Возврат на предыдущий шаг
         try:
@@ -230,8 +234,9 @@ async def back_handler(message: Message, state: FSMContext):
             msg_text = back_messages.get(prev_state_key, "Вернулся на шаг назад.")
             await message.answer(f"🔙 {msg_text}", reply_markup=back_kb)
             return
-        except Exception:
+        except Exception as e:
             # При ошибке - в главное меню
+            logging.error(f"BACK_HANDLER ERROR: {e}", exc_info=True)
             pass
     
     # Нет истории или ошибка - в главное меню
