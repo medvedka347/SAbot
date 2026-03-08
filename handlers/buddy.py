@@ -431,7 +431,7 @@ async def buddy_show_mentee(callback: CallbackQuery, state: FSMContext):
     # Проверяем что менти принадлежит текущему ментору ИЛИ пользователь — Лев
     from db_utils import get_user_roles
     current_user = await get_user_by_id(callback.from_user.id)
-    user_roles = await get_user_roles(user_id=callback.from_user.id)
+    user_roles = await get_user_roles(user_id=callback.from_user.id, username=callback.from_user.username)
     
     is_owner = current_user and mentee['mentor_id'] == current_user['id']
     is_lion = ROLE_LION in user_roles
