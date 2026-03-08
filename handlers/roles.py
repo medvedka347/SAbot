@@ -250,6 +250,7 @@ async def role_receive_users(message: Message, state: FSMContext):
     
     await state.update_data(users_to_assign=users, _prev_state="input_users")
     await state.set_state(RoleStates.selecting_role)
+    await state.update_data(_prev_state="selecting_role")  # Для навигации назад
     
     await message.answer(
         f"Найдено *{len(users)}* пользователей:\n" + "\n".join(preview) + "\n\nВыберите роль:",

@@ -247,7 +247,15 @@ async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
         await safe_edit_text(callback, "❌ Не найдено")
         return
     
-    await state.update_data(edit_id=mat_id, edit_item=mat, _prev_state="selecting_item")
+    # Получаем текущий _prev_state (selecting_stage) для цепочки навигации
+    data = await state.get_data()
+    prev_chain = data.get("_prev_state")
+    await state.update_data(
+        edit_id=mat_id, 
+        edit_item=mat, 
+        _prev_state="selecting_item",
+        _prev_chain=prev_chain  # Сохраняем цепочку для двойного назад
+    )
     await state.set_state(MaterialStates.editing)
     
     await safe_edit_text(

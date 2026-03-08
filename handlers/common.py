@@ -212,8 +212,9 @@ async def back_handler(message: Message, state: FSMContext):
         try:
             prev_state = STATE_MAP[prev_state_key]()
             await state.set_state(prev_state)
-            # Убираем _prev_state, чтобы не зациклиться
-            await state.update_data(_prev_state=None)
+            # Восстанавливаем цепочку для следующего назад (если есть)
+            prev_chain = data.get("_prev_chain")
+            await state.update_data(_prev_state=prev_chain, _prev_chain=None)
             
             # Формируем сообщение в зависимости от состояния
             back_messages = {
