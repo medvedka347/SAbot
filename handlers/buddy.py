@@ -268,7 +268,7 @@ def parse_date_flexible(date_str: str) -> str | None:
 
 @router.message(BuddyStates.input_assigned_date, HasRole(ROLE_MENTOR))
 async def buddy_add_date(message: Message, state: FSMContext):
-    """Получение даты и сохранение менти."""
+    """Получение даты и сохранение менти (для ментора или льва, назначающего бадди)."""
     if not message.text:
         return
     
@@ -286,32 +286,46 @@ async def buddy_add_date(message: Message, state: FSMContext):
     
     data = await state.get_data()
     
-    # Получаем внутренний ID ментора из таблицы user_roles
-    # Пользователь должен иметь роль ROLE_MENTOR в user_roles
-    user = await get_user_by_id(message.from_user.id)
-    if not user:
-        await message.answer("❌ Ошибка: не найден профиль ментора")
-        await state.clear()
-        return
+    # Проверяем, есть ли selected_mentor_id - это значит, что лев назначает бадди другому ментору
+    mentor_id = data.get('selected_mentor_id')
+    is_lion_assigning = mentor_id is not None
+    
+    if not mentor_id:
+        # Обычный ментор добавляет менти себе
+        user = await get_user_by_id(message.from_user.id)
+        if not user:
+            await message.answer("❌ Ошибка: не найден профиль ментора")
+            await state.clear()
+            return
+        mentor_id = user['id']
     
     try:
-        # user['id'] — это внутренний ID из user_roles (не telegram user_id)
         mentorship_id = await add_mentorship(
-            mentor_id=user['id'],
+            mentor_id=mentor_id,
             mentee_full_name=data['full_name'],
             mentee_telegram_tag=data.get('telegram_tag'),
             assigned_date=date_str,
             status='active'
         )
         
-        await message.answer(
-            f"✅ *Менти добавлен!*\n\n"
-            f"👤 {data['full_name']}\n"
-            f"📅 {date_str}\n"
-            f"📊 Статус: Активно",
-            parse_mode="Markdown",
-            reply_markup=back_kb
-        )
+        if is_lion_assigning:
+            await message.answer(
+                f"✅ *Менти назначен ментору!*\n\n"
+                f"👤 {data['full_name']}\n"
+                f"📅 {date_str}\n"
+                f"📊 Статус: Активно",
+                parse_mode="Markdown",
+                reply_markup=back_kb
+            )
+        else:
+            await message.answer(
+                f"✅ *Менти добавлен!*\n\n"
+                f"👤 {data['full_name']}\n"
+                f"📅 {date_str}\n"
+                f"📊 Статус: Активно",
+                parse_mode="Markdown",
+                reply_markup=back_kb
+            )
         await state.clear()
         
     except Exception as e:
