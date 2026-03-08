@@ -323,16 +323,52 @@ def parse_users_input(text: str) -> tuple[list[dict], list[str]]:
 # ==================== KEYBOARD SELECTOR ====================
 
 async def get_main_keyboard(user_id: int):
-    """Получить правильную клавиатуру для пользователя по его роли."""
-    from db_utils import get_user_role
+    """Получить клавиатуру для пользователя с учетом мультиролей."""
+    from db_utils import get_user_roles
+    from config import ROLE_ADMIN, ROLE_MENTOR, ROLE_LION
     
-    role = await get_user_role(user_id=user_id)
-    if role == ROLE_ADMIN:
-        return admin_kb
-    elif role == ROLE_MENTOR:
-        return mentor_kb
-    else:
-        return user_kb
+    roles = await get_user_roles(user_id=user_id)
+    
+    # Собираем кнопки из всех ролей
+    buttons = set()
+    
+    # User базовые кнопки (для всех)
+    buttons.update(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"])
+    
+    if ROLE_MENTOR in roles:
+        buttons.add("⚙️ Админка")
+    
+    if ROLE_ADMIN in roles:
+        buttons.update([
+            "📦 Управление материалами",
+            "👥 Управление ролями",
+            "📋 Управление событиями",
+            "🚫 Управление банами"
+        ])
+        buttons.add("🔙 Назад")
+    
+    if ROLE_LION in roles:
+        # Лев видит свою панель в Buddy
+        pass  # 🤝 Buddy уже добавлено
+    
+    # Формируем keyboard
+    keyboard = []
+    row = []
+    for btn in ["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"]:
+        if btn in buttons:
+            row.append(btn)
+        if len(row) == 2:
+            keyboard.append([KeyboardButton(text=b) for b in row])
+            row = []
+    if row:
+        keyboard.append([KeyboardButton(text=b) for b in row])
+    
+    # Добавляем админские кнопки
+    admin_buttons = [b for b in buttons if b not in ["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"]]
+    for btn in admin_buttons:
+        keyboard.append([KeyboardButton(text=btn)])
+    
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
 # ==================== GLOBAL ERROR HANDLER ====================

@@ -289,7 +289,15 @@ async def get_user_by_username(username: str) -> dict | None:
 
 
 async def get_user_role(user_id: int = None, username: str = None) -> str | None:
-    """Получить роль по ID или username (оптимизировано - один запрос)."""
+    """Получить роль по ID или username (для обратной совместимости).
+    Для мультиролей используйте get_user_roles()."""
+    roles = await get_user_roles(user_id, username)
+    return roles[0] if roles else None
+
+
+async def get_user_roles(user_id: int = None, username: str = None) -> list[str]:
+    """Получить список ролей по ID или username (поддержка мультиролей).
+    Роли хранятся как 'admin,lion,mentor' и возвращаются как ['admin', 'lion', 'mentor']."""
     username = normalize_username(username)
     
     if user_id and username:
@@ -308,9 +316,50 @@ async def get_user_role(user_id: int = None, username: str = None) -> str | None
             (username,)
         )
     else:
-        return None
+        return []
     
-    return row[0] if row else None
+    if not row or not row[0]:
+        return []
+    
+    # Разбиваем роли по запятой и чистим
+    roles = [r.strip() for r in row[0].split(',') if r.strip()]
+    return roles
+
+
+async def has_role(user_id: int, role: str) -> bool:
+    """Проверить, имеет ли пользователь конкретную роль."""
+    roles = await get_user_roles(user_id=user_id)
+    return role in roles
+
+
+async def add_user_role(user_id: int, new_role: str) -> bool:
+    """Добавить роль пользователю (для мультиролей)."""
+    roles = await get_user_roles(user_id=user_id)
+    if new_role in roles:
+        return True  # Уже есть
+    
+    roles.append(new_role)
+    roles_str = ','.join(roles)
+    
+    return await db.execute(
+        "UPDATE user_roles SET role = ? WHERE user_id = ?",
+        (roles_str, user_id)
+    ) > 0
+
+
+async def remove_user_role(user_id: int, role_to_remove: str) -> bool:
+    """Удалить роль у пользователя."""
+    roles = await get_user_roles(user_id=user_id)
+    if role_to_remove not in roles:
+        return True  # Не было такой роли
+    
+    roles.remove(role_to_remove)
+    roles_str = ','.join(roles) if roles else 'user'  # Если ролей не осталось - даем user
+    
+    return await db.execute(
+        "UPDATE user_roles SET role = ? WHERE user_id = ?",
+        (roles_str, user_id)
+    ) > 0
 
 
 def validate_user_id(user_id: any) -> int | None:
@@ -698,21 +747,26 @@ class IsAuthorizedUser:
 
 
 class HasRole:
-    """Фильтр проверки роли с использованием кешированного значения из middleware."""
-    def __init__(self, role: str):
-        self.role = role
+    """Фильтр проверки роли с поддержкой мультиролей."""
+    def __init__(self, role: str | list[str]):
+        """Принимает одну роль или список ролей (достаточно одной)."""
+        if isinstance(role, str):
+            self.roles = [role]
+        else:
+            self.roles = role
     
     async def __call__(self, message: Message, **data) -> bool:
-        # Сначала проверяем кеш из middleware (быстро)
-        user_role = data.get("user_role")
+        # Проверяем кеш из middleware
+        user_roles = data.get("user_roles")  # Кеш теперь список
         
-        # Если кеша нет (например, callback_query), берём из БД
-        if user_role is None:
+        # Если кеша нет - берём из БД
+        if user_roles is None:
             user_id = message.from_user.id
             username = message.from_user.username
-            user_role = await get_user_role(user_id=user_id, username=username)
+            user_roles = await get_user_roles(user_id=user_id, username=username)
         
-        return user_role == self.role
+        # Проверяем, есть ли у пользователя хотя бы одна из требуемых ролей
+        return any(role in user_roles for role in self.roles)
 
 
 # ==================== EVENTS ====================
