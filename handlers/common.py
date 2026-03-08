@@ -338,8 +338,18 @@ async def buddy_handler(message: Message, state: FSMContext):
     
     await state.clear()
     
+    # Если пользователь был добавлен по username без ID - подхватываем его ID
+    if message.from_user.username:
+        user_from_db = await get_user_by_username(message.from_user.username)
+        if user_from_db and user_from_db.get("user_id") is None:
+            await update_user_id_by_username(message.from_user.username, message.from_user.id)
+            logging.info(f"Подхвачен user_id {message.from_user.id} для @{message.from_user.username} в buddy_handler")
+    
     # Получаем роли пользователя (поддержка мультиролей)
     roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
+    
+    # DEBUG: логируем роли
+    logging.info(f"BUDDY_HANDLER: user_id={message.from_user.id}, username={message.from_user.username}, roles={roles}")
     
     if ROLE_LION in roles:
         # Для Льва (мета-админа) - показываем панель управления всей системой
