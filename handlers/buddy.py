@@ -339,26 +339,38 @@ async def lion_add_date(message: Message, state: FSMContext):
         return
     
     data = await state.get_data()
+    logging.info(f"LION_ADD_DATE: data={data}")
     
-    # Получаем ID выбранного ментора (которого выбрал лев)
+    # Проверяем все необходимые поля
     mentor_id = data.get('selected_mentor_id')
+    full_name = data.get('full_name')
+    
     if not mentor_id:
-        await message.answer("❌ Ошибка: ментор не выбран")
+        logging.error("LION_ADD_DATE: selected_mentor_id not found in state")
+        await message.answer("❌ Ошибка: ментор не выбран. Начните сначала.")
+        await state.clear()
+        return
+    
+    if not full_name:
+        logging.error("LION_ADD_DATE: full_name not found in state")
+        await message.answer("❌ Ошибка: ФИО не заполнено. Начните сначала.")
         await state.clear()
         return
     
     try:
         mentorship_id = await add_mentorship(
             mentor_id=mentor_id,
-            mentee_full_name=data['full_name'],
+            mentee_full_name=full_name,
             mentee_telegram_tag=data.get('telegram_tag'),
             assigned_date=date_str,
             status='active'
         )
         
+        logging.info(f"LION_ADD_DATE: Successfully created mentorship {mentorship_id}")
+        
         await message.answer(
             f"✅ *Менти назначен ментору!*\n\n"
-            f"👤 {data['full_name']}\n"
+            f"👤 {full_name}\n"
             f"📅 {date_str}\n"
             f"📊 Статус: Активно",
             parse_mode="Markdown",
@@ -367,7 +379,7 @@ async def lion_add_date(message: Message, state: FSMContext):
         await state.clear()
         
     except Exception as e:
-        logging.error(f"Ошибка назначения менти: {e}")
+        logging.error(f"LION_ADD_DATE: Exception - {e}", exc_info=True)
         await message.answer("❌ Ошибка при сохранении. Попробуйте позже.")
         await state.clear()
 
@@ -705,8 +717,13 @@ async def lion_select_mentor_for_assign(callback: CallbackQuery, state: FSMConte
         await callback.message.edit_text("❌ Некорректные данные")
         return
     
+    logging.info(f"LION_SELECT_MENTOR: mentor_id={mentor_id}")
     await state.update_data(selected_mentor_id=mentor_id, _prev_state="menu")
     await state.set_state(BuddyStates.input_full_name)
+    
+    # Проверяем, что сохранилось
+    data = await state.get_data()
+    logging.info(f"LION_SELECT_MENTOR: saved data={data}")
     
     await callback.message.edit_text(
         "✏️ *Назначение бадди*\n\n"
