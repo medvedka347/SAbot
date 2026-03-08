@@ -98,13 +98,14 @@ async def buddy_list_mentees(message: Message, state: FSMContext):
     
     await state.set_state(BuddyStates.menu)
     
-    # Получаем ID ментора из БД
+    # Получаем внутренний ID ментора из таблицы user_roles
+    # Это тот же пользователь, но нам нужен его ID в БД (user_roles.id)
     user = await get_user_by_id(message.from_user.id)
     if not user:
         await message.answer("❌ Ошибка: не найден профиль ментора")
         return
     
-    mentor_db_id = user['id']
+    mentor_db_id = user['id']  # Внутренний ID из user_roles для связи с buddy_mentorships
     mentees = await get_mentor_mentees(mentor_db_id)
     
     if not mentees:
@@ -221,7 +222,8 @@ async def buddy_add_date(message: Message, state: FSMContext):
     
     data = await state.get_data()
     
-    # Получаем ID ментора
+    # Получаем внутренний ID ментора из таблицы user_roles
+    # Пользователь должен иметь роль ROLE_MENTOR в user_roles
     user = await get_user_by_id(message.from_user.id)
     if not user:
         await message.answer("❌ Ошибка: не найден профиль ментора")
@@ -229,6 +231,7 @@ async def buddy_add_date(message: Message, state: FSMContext):
         return
     
     try:
+        # user['id'] — это внутренний ID из user_roles (не telegram user_id)
         mentorship_id = await add_mentorship(
             mentor_id=user['id'],
             mentee_full_name=data['full_name'],

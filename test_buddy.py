@@ -11,7 +11,6 @@
 - TC-BUD-007: Ментор - удаление менти
 - TC-BUD-008: Кнопка "Назад" в добавлении менти
 """
-import pytest
 import asyncio
 from datetime import datetime
 
@@ -29,7 +28,7 @@ async def test_user_without_mentor():
     # Логика: Пользователь нажимает 🤝 Buddy
     # Ожидаемый результат: "Тебе пока не назначен бадди"
     
-    print("✅ Тест пройден: Показано сообщение 'Тебе пока не назначен бадди'")
+    print("[OK] Тест пройден: Показано сообщение 'Тебе пока не назначен бадди'")
 
 
 async def test_user_with_mentor():
@@ -39,7 +38,7 @@ async def test_user_with_mentor():
     # Логика: Пользователю назначен ментор, он нажимает 🤝 Buddy
     # Ожидаемый результат: "Вот контакты твоего бадди: @mentor_username"
     
-    print("✅ Тест пройден: Показаны контакты ментора")
+    print("[OK] Тест пройден: Показаны контакты ментора")
 
 
 async def test_mentor_empty_list():
@@ -49,7 +48,7 @@ async def test_mentor_empty_list():
     # Логика: Ментор нажимает "📋 Список менти" когда у него нет менти
     # Ожидаемый результат: "У вас пока нет менти" + кнопка "➕ Добавить"
     
-    print("✅ Тест пройден: Показано сообщение о пустом списке")
+    print("[OK] Тест пройден: Показано сообщение о пустом списке")
 
 
 async def test_mentor_add_mentee():
@@ -64,7 +63,7 @@ async def test_mentor_add_mentee():
     
     # Ожидаемый результат: "✅ Менти добавлен!"
     
-    print("✅ Тест пройден: Менти успешно добавлен")
+    print("[OK] Тест пройден: Менти успешно добавлен")
 
 
 async def test_mentor_list_mentees():
@@ -76,7 +75,7 @@ async def test_mentor_list_mentees():
     # - Список с ФИО, датой, статусом
     # - Кнопки для управления каждым менти
     
-    print("✅ Тест пройден: Список менти отображается корректно")
+    print("[OK] Тест пройден: Список менти отображается корректно")
 
 
 async def test_mentor_change_status():
@@ -91,7 +90,7 @@ async def test_mentor_change_status():
     
     # Ожидаемый результат: "Статус обновлён: ✅ Завершено"
     
-    print("✅ Тест пройден: Статус изменён")
+    print("[OK] Тест пройден: Статус изменён")
 
 
 async def test_mentor_delete_mentee():
@@ -106,7 +105,7 @@ async def test_mentor_delete_mentee():
     
     # Ожидаемый результат: "✅ Менти удалён"
     
-    print("✅ Тест пройден: Менти удалён")
+    print("[OK] Тест пройден: Менти удалён")
 
 
 async def test_back_navigation():
@@ -120,7 +119,7 @@ async def test_back_navigation():
     
     # Ожидаемый результат: Возврат к вводу ФИО или в меню Buddy
     
-    print("✅ Тест пройден: Навигация назад работает")
+    print("[OK] Тест пройден: Навигация назад работает")
 
 
 async def run_all_tests():
@@ -144,7 +143,7 @@ async def run_all_tests():
         try:
             await test()
         except Exception as e:
-            print(f"❌ Тест {test.__name__} провален: {e}")
+            print(f"[FAIL] Тест {test.__name__} провален: {e}")
     
     print("\n" + "=" * 50)
     print("ТЕСТИРОВАНИЕ ЗАВЕРШЕНО")
