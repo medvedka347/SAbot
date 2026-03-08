@@ -341,10 +341,11 @@ async def buddy_handler(message: Message, state: FSMContext):
     # Получаем роли пользователя (поддержка мультиролей)
     roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
     
-    # DEBUG: показываем роли
-    await message.answer(f"DEBUG: roles={roles}, user_id={message.from_user.id}, username={message.from_user.username}")
+    # Приоритет ролей для Buddy: LION > MENTOR/ADMIN > USER
+    is_lion = ROLE_LION in roles
+    is_mentor = ROLE_MENTOR in roles or ROLE_ADMIN in roles  # Админ тоже может быть ментором
     
-    if ROLE_LION in roles:
+    if is_lion:
         # Для Льва (мета-админа) - показываем панель управления всей системой
         from utils import kb
         lion_kb = kb(["🦁 Панель Льва", "🔙 Назад"])
@@ -354,7 +355,7 @@ async def buddy_handler(message: Message, state: FSMContext):
             parse_mode="Markdown",
             reply_markup=lion_kb if message.chat.type == "private" else None
         )
-    elif ROLE_MENTOR in roles:
+    elif is_mentor:
         # Для менторов - показываем меню с кнопкой "Список менти"
         from utils import kb
         buddy_kb = kb(["📋 Список менти", "➕ Добавить менти", "🔙 Назад"])
