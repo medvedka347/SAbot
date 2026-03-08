@@ -167,7 +167,7 @@ async def admin_handler(message: Message, state: FSMContext):
         return
     
     await state.clear()
-    roles = await get_user_roles(user_id=message.from_user.id)
+    roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
     
     # Определяем клавиатуру и текст по приоритету ролей
     if ROLE_ADMIN in roles:
@@ -339,7 +339,7 @@ async def buddy_handler(message: Message, state: FSMContext):
     await state.clear()
     
     # Получаем роли пользователя (поддержка мультиролей)
-    roles = await get_user_roles(user_id=message.from_user.id)
+    roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
     
     if ROLE_LION in roles:
         # Для Льва (мета-админа) - показываем панель управления всей системой
