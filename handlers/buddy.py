@@ -6,6 +6,7 @@
 - Добавление менти
 - Обновление статуса менти
 - Удаление менти
+- Панель Льва (мета-админ): просмотр всех менторов, отчеты, назначение менти
 """
 import logging
 from aiogram import Router, F
@@ -13,9 +14,9 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
-from config import ROLE_MENTOR, ROLE_ADMIN
+from config import ROLE_MENTOR, ROLE_ADMIN, ROLE_LION
 from db_utils import (
-    HasRole, get_user_by_id, get_user_by_username,
+    HasRole, get_user_by_id, get_user_by_username, get_all_users,
     add_mentorship, get_mentor_mentees, update_mentorship_status,
     delete_mentorship, get_mentorship_by_id
 )
@@ -382,3 +383,219 @@ async def buddy_back_to_list(callback: CallbackQuery, state: FSMContext):
     message.from_user = callback.from_user
     
     await buddy_list_mentees(message, state)
+
+
+# ==================== LION PANEL (META ADMIN) ====================
+
+@router.message(F.text == "🦁 Панель Льва", HasRole(ROLE_LION))
+async def lion_panel(message: Message, state: FSMContext):
+    """Панель Льва - управление Buddy системой."""
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        return
+    
+    await state.clear()
+    
+    from utils import kb
+    lion_kb = kb([
+        "📊 Список менторов",
+        "📋 Все менти",
+        "➕ Назначить бадди",
+        "🔙 Назад"
+    ])
+    
+    await message.answer(
+        "🦁 *Панель Льва*\n\n"
+        "Управление системой Buddy:\n"
+        "• Просмотр всех менторов\n"
+        "• Отчеты по менти\n"
+        "• Назначение бадди менторам",
+        parse_mode="Markdown",
+        reply_markup=lion_kb if message.chat.type == "private" else None
+    )
+
+
+@router.message(F.text == "📊 Список менторов", HasRole(ROLE_LION))
+async def lion_list_mentors(message: Message, state: FSMContext):
+    """Показать список всех менторов (для Льва)."""
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        return
+    
+    from db_utils import get_all_mentors, get_mentor_stats
+    
+    mentors = await get_all_mentors()
+    
+    if not mentors:
+        await message.answer("📭 Нет менторов в системе", reply_markup=back_kb)
+        return
+    
+    lines = [f"👥 *Менторы ({len(mentors)}):*\n"]
+    keyboard = []
+    
+    for i, mentor in enumerate(mentors, 1):
+        stats = await get_mentor_stats(mentor['id'])
+        contact = f"@{mentor['username']}" if mentor['username'] else f"ID:{mentor['user_id']}"
+        lines.append(
+            f"{i}. {contact}\n"
+            f"   🟢 {stats['active']} | ✅ {stats['completed']} | ❌ {stats['dropped']}"
+        )
+        keyboard.append([InlineKeyboardButton(
+            text=f"📊 {contact[:20]}",
+            callback_data=f"lion_mentor:{mentor['id']}"
+        )])
+    
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
+
+@router.callback_query(F.data.startswith("lion_mentor:"), HasRole(ROLE_LION))
+async def lion_show_mentor_details(callback: CallbackQuery, state: FSMContext):
+    """Показать детали ментора (отчет)."""
+    await callback.answer()
+    
+    try:
+        mentor_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await callback.message.edit_text("❌ Некорректные данные")
+        return
+    
+    from db_utils import get_mentor_stats
+    
+    mentor = await get_user_by_id(callback.from_user.id)
+    mentees = await get_mentor_mentees(mentor_id)
+    stats = await get_mentor_stats(mentor_id)
+    
+    lines = [
+        f"📊 *Отчет по ментору*\n",
+        f"*Статистика:*",
+        f"🟢 Активно: {stats['active']}",
+        f"✅ Завершено: {stats['completed']}",
+        f"❌ Брошено: {stats['dropped']}",
+        f"📊 Всего: {stats['total']}\n",
+        f"*Список менти:*"
+    ]
+    
+    for mentee in mentees:
+        lines.append(format_mentee(mentee))
+    
+    await callback.message.edit_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="lion_back_to_mentors")]
+        ])
+    )
+
+
+@router.callback_query(F.data == "lion_back_to_mentors", HasRole(ROLE_LION))
+async def lion_back_to_mentors(callback: CallbackQuery, state: FSMContext):
+    """Вернуться к списку менторов."""
+    await callback.answer()
+    
+    from aiogram.types import Message
+    message = callback.message
+    message.from_user = callback.from_user
+    
+    await lion_list_mentors(message, state)
+
+
+@router.message(F.text == "📋 Все менти", HasRole(ROLE_LION))
+async def lion_all_mentees(message: Message, state: FSMContext):
+    """Показать всех менти во всех системе."""
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        return
+    
+    from db_utils import get_all_mentorships_for_lion
+    
+    mentorships = await get_all_mentorships_for_lion()
+    
+    if not mentorships:
+        await message.answer("📭 Нет менти в системе", reply_markup=back_kb)
+        return
+    
+    lines = [f"📋 *Все менти ({len(mentorships)}):*\n"]
+    
+    for m in mentorships:
+        mentor_contact = f"@{m['mentor_username']}" if m['mentor_username'] else f"ID:{m['mentor_user_id']}"
+        status_emoji = {
+            'active': '🟢',
+            'completed': '✅',
+            'paused': '⏸️',
+            'dropped': '❌'
+        }.get(m['status'], '⚪')
+        lines.append(
+            f"• *{m['mentee_name']}*\n"
+            f"  👤 Ментор: {mentor_contact}\n"
+            f"  {status_emoji} {BUDDY_STATUSES.get(m['status'], m['status'])} | 📅 {m['assigned_date']}"
+        )
+    
+    await message.answer(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=back_kb
+    )
+
+
+@router.message(F.text == "➕ Назначить бадди", HasRole(ROLE_LION))
+async def lion_assign_start(message: Message, state: FSMContext):
+    """Начать назначение бадди ментору."""
+    ok, wait = check_rate_limit(message.from_user.id)
+    if not ok:
+        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        return
+    
+    from db_utils import get_all_mentors
+    
+    mentors = await get_all_mentors()
+    
+    if not mentors:
+        await message.answer("❌ Нет доступных менторов", reply_markup=back_kb)
+        return
+    
+    await state.set_state(BuddyStates.menu)
+    await state.update_data(lion_action="assign_mentee", _prev_state="menu")
+    
+    keyboard = []
+    for mentor in mentors:
+        contact = f"@{mentor['username']}" if mentor['username'] else f"ID:{mentor['user_id']}"
+        keyboard.append([InlineKeyboardButton(
+            text=f"👤 {contact[:30]}",
+            callback_data=f"lion_assign:{mentor['id']}"
+        )])
+    
+    await message.answer(
+        "🦁 *Назначение бадди*\n\n"
+        "Выберите ментора:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
+
+@router.callback_query(F.data.startswith("lion_assign:"), HasRole(ROLE_LION))
+async def lion_select_mentor_for_assign(callback: CallbackQuery, state: FSMContext):
+    """Выбрали ментора для назначения бадди."""
+    await callback.answer()
+    
+    try:
+        mentor_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await callback.message.edit_text("❌ Некорректные данные")
+        return
+    
+    await state.update_data(selected_mentor_id=mentor_id, _prev_state="menu")
+    await state.set_state(BuddyStates.input_full_name)
+    
+    await callback.message.edit_text(
+        "✏️ *Назначение бадди*\n\n"
+        "Введите ФИО менти:",
+        parse_mode="Markdown"
+    )
+    await callback.message.answer("Введите ФИО менти:", reply_markup=back_kb)

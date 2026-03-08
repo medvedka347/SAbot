@@ -15,7 +15,7 @@ from aiogram.types import Message
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 
-from config import ROLE_ADMIN, ROLE_MENTOR
+from config import ROLE_ADMIN, ROLE_MENTOR, ROLE_LION
 from db_utils import (
     get_user_role, cleanup_expired_bans, get_ban_status, 
     record_failed_attempt, clear_failed_attempts, 
@@ -264,7 +264,17 @@ async def buddy_handler(message: Message, state: FSMContext):
     # Получаем роль пользователя
     role = await get_user_role(user_id=message.from_user.id)
     
-    if role == ROLE_MENTOR:
+    if role == ROLE_LION:
+        # Для Льва (мета-админа) - показываем панель управления всей системой
+        from utils import kb
+        lion_kb = kb(["🦁 Панель Льва", "🔙 Назад"])
+        await message.answer(
+            "🤝 *Buddy*\n\n"
+            "Вы имеете права Льва. Используйте панель для управления системой Buddy.",
+            parse_mode="Markdown",
+            reply_markup=lion_kb if message.chat.type == "private" else None
+        )
+    elif role == ROLE_MENTOR:
         # Для менторов - показываем меню с кнопкой "Список менти"
         from utils import kb
         buddy_kb = kb(["📋 Список менти", "➕ Добавить менти", "🔙 Назад"])

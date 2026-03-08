@@ -928,4 +928,78 @@ async def get_mentorship_by_id(mentorship_id: int) -> dict | None:
     }
 
 
+# ==================== BUDDY LION (META ADMIN) ====================
+
+async def get_all_mentors() -> list[dict]:
+    """Получить список всех менторов (для Льва)."""
+    rows = await db.fetchall(
+        """SELECT id, user_id, username, created_at 
+           FROM user_roles 
+           WHERE role = 'mentor' 
+           ORDER BY created_at DESC"""
+    )
+    return [
+        {
+            "id": r[0],
+            "user_id": r[1],
+            "username": r[2],
+            "created_at": r[3]
+        }
+        for r in rows
+    ]
+
+
+async def get_mentor_stats(mentor_id: int) -> dict:
+    """Получить статистику ментора (для Льва)."""
+    # Общее количество менти
+    total = await db.fetchone(
+        "SELECT COUNT(*) FROM buddy_mentorships WHERE mentor_id = ?",
+        (mentor_id,)
+    )
+    # По статусам
+    active = await db.fetchone(
+        "SELECT COUNT(*) FROM buddy_mentorships WHERE mentor_id = ? AND status = 'active'",
+        (mentor_id,)
+    )
+    completed = await db.fetchone(
+        "SELECT COUNT(*) FROM buddy_mentorships WHERE mentor_id = ? AND status = 'completed'",
+        (mentor_id,)
+    )
+    dropped = await db.fetchone(
+        "SELECT COUNT(*) FROM buddy_mentorships WHERE mentor_id = ? AND status = 'dropped'",
+        (mentor_id,)
+    )
+    
+    return {
+        "total": total[0] if total else 0,
+        "active": active[0] if active else 0,
+        "completed": completed[0] if completed else 0,
+        "dropped": dropped[0] if dropped else 0
+    }
+
+
+async def get_all_mentorships_for_lion() -> list[dict]:
+    """Получить все наставничества для Льва (с информацией о менторе)."""
+    rows = await db.fetchall(
+        """SELECT m.id, m.mentor_id, m.mentee_full_name, m.mentee_telegram_tag,
+                  m.status, m.assigned_date, u.username as mentor_username, u.user_id as mentor_user_id
+           FROM buddy_mentorships m
+           JOIN user_roles u ON m.mentor_id = u.id
+           ORDER BY m.assigned_date DESC"""
+    )
+    return [
+        {
+            "id": r[0],
+            "mentor_id": r[1],
+            "mentee_name": r[2],
+            "mentee_tag": r[3],
+            "status": r[4],
+            "assigned_date": r[5],
+            "mentor_username": r[6],
+            "mentor_user_id": r[7]
+        }
+        for r in rows
+    ]
+
+
 # Created by Техножрец R1sl1n

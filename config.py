@@ -11,7 +11,8 @@ DB_NAME = os.getenv("DB_NAME", "user_roles.db")
 ROLE_USER = "user"
 ROLE_MENTOR = "mentor"
 ROLE_ADMIN = "admin"
-ROLES = [ROLE_USER, ROLE_MENTOR, ROLE_ADMIN]
+ROLE_LION = "lion"  # Мета-роль: админ + управление Buddy
+ROLES = [ROLE_USER, ROLE_MENTOR, ROLE_ADMIN, ROLE_LION]
 
 # --- Стадии материалов ---
 STAGE_FUNDAMENTAL = "fundamental"
