@@ -51,6 +51,7 @@ def role_kb(prefix: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="👤 User", callback_data=f"{prefix}:user")],
         [InlineKeyboardButton(text="🎓 Mentor", callback_data=f"{prefix}:mentor")],
         [InlineKeyboardButton(text="👑 Admin", callback_data=f"{prefix}:admin")],
+        [InlineKeyboardButton(text="🦁 Lion (Meta-Admin)", callback_data=f"{prefix}:lion")],
     ])
 
 

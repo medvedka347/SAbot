@@ -140,7 +140,7 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id BIGINT UNIQUE,
                     username TEXT UNIQUE,
-                    role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
+                    role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin', 'lion')),
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     CHECK (user_id IS NOT NULL OR username IS NOT NULL)
                 )
@@ -152,8 +152,17 @@ class Database:
         cursor = await db.execute("PRAGMA table_info(user_roles)")
         columns = {row[1]: row for row in await cursor.fetchall()}
         
-        # Если есть колонка 'id' - значит новая схема, ничего не делаем
+        # Если есть колонка 'id' - значит новая схема
         if 'id' in columns:
+            # Проверяем CHECK ограничение на 'lion'
+            cursor = await db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='user_roles'"
+            )
+            row = await cursor.fetchone()
+            if row and 'lion' not in row[0]:
+                logging.warning("Миграция: добавление роли 'lion' в CHECK ограничение")
+                # Пересоздаем таблицу с новым CHECK
+                await self._migrate_role_check(db)
             return
         
         # Таблица без колонки 'id' - нужна миграция на новую схему
@@ -165,7 +174,7 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id BIGINT UNIQUE,
                 username TEXT UNIQUE,
-                role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin')),
+                role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin', 'lion')),
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 CHECK (user_id IS NOT NULL OR username IS NOT NULL)
             )
@@ -186,6 +195,27 @@ class Database:
         await db.execute("DROP TABLE user_roles")
         await db.execute("ALTER TABLE user_roles_new RENAME TO user_roles")
         logging.info("Миграция user_roles выполнена")
+    
+    async def _migrate_role_check(self, db: aiosqlite.Connection):
+        """Миграция: добавление 'lion' в CHECK ограничение роли."""
+        await db.execute("DROP TABLE IF EXISTS user_roles_new")
+        await db.execute("""
+            CREATE TABLE user_roles_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id BIGINT UNIQUE,
+                username TEXT UNIQUE,
+                role TEXT NOT NULL CHECK (role IN ('user', 'mentor', 'admin', 'lion')),
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                CHECK (user_id IS NOT NULL OR username IS NOT NULL)
+            )
+        """)
+        await db.execute("""
+            INSERT INTO user_roles_new (id, user_id, username, role, created_at)
+            SELECT id, user_id, username, role, created_at FROM user_roles
+        """)
+        await db.execute("DROP TABLE user_roles")
+        await db.execute("ALTER TABLE user_roles_new RENAME TO user_roles")
+        logging.info("Миграция CHECK ограничения выполнена")
     
     async def _migrate_materials(self, db: aiosqlite.Connection):
         """Миграция: добавление поля stage."""
