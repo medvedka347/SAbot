@@ -341,6 +341,9 @@ async def buddy_handler(message: Message, state: FSMContext):
     # Получаем роли пользователя (поддержка мультиролей)
     roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
     
+    # DEBUG: показываем роли
+    await message.answer(f"DEBUG: roles={roles}, user_id={message.from_user.id}, username={message.from_user.username}")
+    
     if ROLE_LION in roles:
         # Для Льва (мета-админа) - показываем панель управления всей системой
         from utils import kb
