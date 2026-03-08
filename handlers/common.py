@@ -231,6 +231,16 @@ async def back_handler(message: Message, state: FSMContext):
         await lion_assign_start(message, state)
         return
     
+    # Общая обработка для "menu" - возврат в главное меню
+    if prev_state_key == "menu":
+        await state.clear()
+        roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
+        role_display = ', '.join(roles) if roles else 'user'
+        welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
+        kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
+        await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
+        return
+    
     # Используем стек истории если он есть
     if state_history:
         # Берём последнее состояние из стека

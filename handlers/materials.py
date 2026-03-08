@@ -449,6 +449,8 @@ async def public_materials_select(message: Message, state: FSMContext):
         return
     
     await state.set_state(MaterialStates.selecting_stage_public)
+    # Устанавливаем _prev_state для возврата в главное меню
+    await state.update_data(_prev_state="menu")
     await message.answer(
         "📚 *Материалы*\n\n"
         "Выберите нужный раздел в меню ниже:\n"
