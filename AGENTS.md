@@ -36,9 +36,20 @@ SABot/
 - `RoleStates` — в `roles.py` (menu, input_users, selecting_role, etc)
 
 ### Кнопка "Назад" (🔙)
-**Поведение:** Просто сбрасывает `state.clear()` и возвращает в главное меню.  
-**Где:** `handlers/common.py` → `back_handler()`  
-**Не делает:** никакой сложной навигации по истории состояний.
+**Поведение:** 
+- Если есть `_prev_state` в данных FSM и он есть в STATE_MAP → возвращает на предыдущий шаг диалога
+- Если нет истории или ошибка → сбрасывает `state.clear()` и возвращает в главное меню
+
+**Где:** `handlers/common.py` → `back_handler()`
+
+**Поддерживаемые переходы назад:**
+- **Materials:** input_title → selecting_stage, input_link → input_title, selecting_item → selecting_stage, editing → selecting_item
+- **Events:** input_datetime → input_type, input_link → input_datetime, input_announcement → input_link, confirm_announce → input_announcement, editing → selecting_item
+- **Roles:** input_users → menu, selecting_role → input_users
+
+**Не поддерживается:**
+- Публичный просмотр материалов (selecting_stage_public) — всегда в главное меню
+- Удаление пользователя (selecting_user_to_delete) — всегда в главное меню
 
 ### Права доступа
 - Используется фильтр `HasRole(ROLE_ADMIN)` из `db_utils.py`
