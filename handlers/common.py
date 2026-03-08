@@ -361,7 +361,7 @@ async def buddy_handler(message: Message, state: FSMContext):
             parse_mode="Markdown",
             reply_markup=lion_kb if message.chat.type == "private" else None
         )
-    elif ROLE_ADMIN in roles or ROLE_MENTOR in roles:
+    elif ROLE_MENTOR in roles:
         # Для менторов - показываем меню с кнопкой "Список менти"
         from utils import kb
         buddy_kb = kb(["📋 Список менти", "➕ Добавить менти", "🔙 Назад"])
