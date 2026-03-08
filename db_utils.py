@@ -449,6 +449,13 @@ async def add_or_update_user(user_id: int = None, username: str = None, role: st
             (final_user_id, final_username, role)
         )
     except aiosqlite.IntegrityError:
+        # Проверяем, не занят ли user_id другим пользователем
+        if final_user_id:
+            existing_with_id = await get_user_by_id(final_user_id)
+            if existing_with_id and existing_with_id.get("username") != final_username:
+                logging.warning(f"user_id {final_user_id} уже занят пользователем @{existing_with_id.get('username')}, пропускаем обновление")
+                return True  # Считаем что пользователь уже есть
+        
         if final_username:
             await db.execute(
                 "UPDATE user_roles SET user_id = ?, role = ? WHERE username = ?",
