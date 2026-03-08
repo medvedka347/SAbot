@@ -77,6 +77,25 @@ SABot/
 - `buddy_mentorships` (id, mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date, created_at)
 - `user_roles` — для связи mentor_id с пользователем
 
+### Мультироли
+**Поддержка нескольких ролей:** Пользователь может иметь несколько ролей одновременно.
+
+**Формат хранения:** В БД роли хранятся как `admin,lion,mentor` (через запятую).
+
+**Функции:**
+- `get_user_roles()` — получить список всех ролей
+- `has_role(user_id, role)` — проверить наличие роли
+- `add_user_role()` — добавить роль пользователю
+- `remove_user_role()` — удалить роль у пользователя
+
+**Примеры комбинаций:**
+- `admin,lion` — админ с правами Льва
+- `admin,mentor` — админ + ментор
+- `lion,mentor` — Лев + ментор
+- `user` — только пользователь (может быть менти)
+
+**HasRole фильтр:** Теперь проверяет наличие роли в списке, а не точное совпадение.
+
 ### Права доступа
 - Используется фильтр `HasRole(ROLE_ADMIN)` из `db_utils.py`
 - `IsAuthorizedUser` есть в коде, но **не используется** в handlers
