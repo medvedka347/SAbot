@@ -19,7 +19,8 @@ from config import ROLE_ADMIN, ROLE_MENTOR
 from db_utils import (
     get_user_role, cleanup_expired_bans, get_ban_status, 
     record_failed_attempt, clear_failed_attempts, 
-    get_user_by_username, update_user_id_by_username
+    get_user_by_username, update_user_id_by_username,
+    get_user_by_id, get_user_mentor
 )
 from utils import (
     check_rate_limit, kb as kb_builder, user_kb, mentor_kb, admin_kb,
@@ -251,17 +252,55 @@ async def back_handler(message: Message, state: FSMContext):
 # ==================== Buddy ====================
 
 @router.message(F.text.in_(["🤝 Buddy", "Buddy"]))
-async def buddy_handler(message: Message):
-    """Обработчик раздела Buddy."""
+async def buddy_handler(message: Message, state: FSMContext):
+    """Обработчик раздела Buddy - разная логика для менторов и пользователей."""
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     
-    await message.answer(
-        "🤝 *Buddy*\n\n"
-        "тут будет анонс системы бадди",
-        parse_mode="Markdown"
+    await state.clear()
+    
+    # Получаем роль пользователя
+    role = await get_user_role(user_id=message.from_user.id)
+    
+    if role == ROLE_MENTOR:
+        # Для менторов - показываем меню с кнопкой "Список менти"
+        from utils import kb
+        buddy_kb = kb(["📋 Список менти", "➕ Добавить менти", "🔙 Назад"])
+        await message.answer(
+            "🤝 *Buddy - Панель ментора*\n\n"
+            "Управляйте своими менти и отслеживайте их прогресс.",
+            parse_mode="Markdown",
+            reply_markup=buddy_kb if message.chat.type == "private" else None
+        )
+    else:
+        # Для обычных пользователей - проверяем есть ли у них ментор
+        from db_utils import get_user_mentor
+        
+        # Получаем user_id из БД
+        user = await get_user_by_username(message.from_user.username) if message.from_user.username else None
+        if not user:
+            user = await get_user_by_id(message.from_user.id)
+        
+        mentor = None
+        if user and user.get('id'):
+            mentor = await get_user_mentor(user['id'])
+        
+        if mentor:
+            mentor_contact = f"@{mentor['mentor_username']}" if mentor['mentor_username'] else f"ID: {mentor['mentor_id']}"
+            await message.answer(
+                f"🤝 *Привет!*\n\n"
+                f"Вот контакты твоего бадди: {mentor_contact}\n"
+                f"Можешь обращаться к нему за помощью и поддержкой!",
+                parse_mode="Markdown"
+            )
+        else:
+            await message.answer(
+                "🤝 *Привет!*\n\n"
+                "Тебе пока не назначен бадди.\n"
+                "Ожидай назначения от администратора или ментора.",
+                parse_mode="Markdown"
     )
 
 

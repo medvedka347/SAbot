@@ -16,13 +16,14 @@ SABot/
 ├── db_utils.py             # Database класс, CRUD, фильтр HasRole, AuthMiddleware
 ├── utils.py                # Клавиатуры, rate limit, formatters
 └── handlers/               # Модули хендлеров (aiogram Router)
-    ├── common.py           # /start, /help, 🔙 Назад, fallback
+    ├── common.py           # /start, /help, 🔙 Назад, fallback, 🤝 Buddy (entry)
     ├── materials.py        # MaterialStates, CRUD материалов
     ├── events.py           # EventStates, CRUD событий
     ├── roles.py            # RoleStates, управление ролями
     ├── bans.py             # Просмотр/снятие банов
     ├── mocks.py            # Запись на мок
-    └── search.py           # /search, групповые команды
+    ├── search.py           # /search, групповые команды
+    └── buddy.py            # BuddyStates, система наставничества
 ```
 
 ---
@@ -34,6 +35,7 @@ SABot/
 - `MaterialStates` — в `materials.py` (menu, selecting_stage, input_title, etc)
 - `EventStates` — в `events.py` (menu, input_type, input_datetime, etc)
 - `RoleStates` — в `roles.py` (menu, input_users, selecting_role, etc)
+- `BuddyStates` — в `buddy.py` (menu, input_full_name, input_telegram_tag, input_assigned_date, selecting_status)
 
 ### Кнопка "Назад" (🔙)
 **Поведение:** 
@@ -50,6 +52,21 @@ SABot/
 **Не поддерживается:**
 - Публичный просмотр материалов (selecting_stage_public) — всегда в главное меню
 - Удаление пользователя (selecting_user_to_delete) — всегда в главное меню
+
+### 🤝 Buddy (Система наставничества)
+**Модуль:** `handlers/buddy.py`
+
+**Для Менторов (ROLE_MENTOR):**
+- 📋 Список менти — просмотр всех менти с ФИО, датой, статусом
+- ➕ Добавить менти — FSM: ФИО → @username → дата (ДД.ММ.ГГ)
+- Управление: изменение статуса (active/completed/paused/dropped), удаление
+
+**Для Пользователей:**
+- Проверка наличия назначенного ментора
+- Если есть — показывает контакты ментора
+- Если нет — сообщение "Тебе пока не назначен бадди"
+
+**Таблица БД:** `buddy_mentorships` (id, mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date, created_at)
 
 ### Права доступа
 - Используется фильтр `HasRole(ROLE_ADMIN)` из `db_utils.py`

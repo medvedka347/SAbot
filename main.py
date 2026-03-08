@@ -12,7 +12,7 @@ from db_utils import (
 from utils import error_handler
 
 # Импортируем роутеры из модулей handlers
-from handlers import common, materials, events, roles, bans, mocks, search
+from handlers import common, materials, events, roles, bans, mocks, search, buddy
 
 logging.basicConfig(level=logging.INFO)
 
@@ -86,6 +86,7 @@ async def main():
     dp.include_router(roles.router)       # Управление ролями
     dp.include_router(bans.router)        # Управление банами
     dp.include_router(mocks.router)       # Запись на мок
+    dp.include_router(buddy.router)       # 🤝 Buddy - система наставничества
     dp.include_router(common.router)      # /start, /help, ⚙️ Админка, 🔙 Назад, 🤝 Buddy, fallback
     
     # Глобальный обработчик ошибок

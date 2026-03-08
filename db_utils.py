@@ -99,6 +99,24 @@ class Database:
                 )
             """)
             
+            # Buddy - система наставничества
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS buddy_mentorships (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mentor_id INTEGER NOT NULL,
+                    mentee_id INTEGER,
+                    mentee_full_name TEXT NOT NULL,
+                    mentee_telegram_tag TEXT,
+                    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'completed', 'paused', 'dropped')),
+                    assigned_date TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (mentor_id) REFERENCES user_roles(id) ON DELETE CASCADE,
+                    FOREIGN KEY (mentee_id) REFERENCES user_roles(id) ON DELETE SET NULL
+                )
+            """)
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_buddy_mentor ON buddy_mentorships(mentor_id)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_buddy_mentee ON buddy_mentorships(mentee_id)")
+            
             # Создаем индексы для быстрого поиска
             await db.execute("CREATE INDEX IF NOT EXISTS idx_bans_active ON bans(user_id, username, banned_until)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_failed_user ON failed_attempts(user_id, username)")
@@ -802,6 +820,112 @@ async def search_materials_by_title(query: str) -> list[dict]:
         {"id": r[0], "stage": r[1], "title": r[2], "link": r[3], "description": r[4]}
         for r in rows
     ]
+
+
+# ==================== BUDDY ====================
+
+async def add_mentorship(mentor_id: int, mentee_full_name: str, 
+                         mentee_telegram_tag: str = None, 
+                         mentee_id: int = None,
+                         assigned_date: str = None,
+                         status: str = 'active') -> int:
+    """Добавить новое наставничество."""
+    if assigned_date is None:
+        from datetime import datetime
+        assigned_date = datetime.now().strftime("%d.%m.%y")
+    
+    cursor = await db.execute(
+        """INSERT INTO buddy_mentorships 
+           (mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date)
+    )
+    return cursor.lastrowid
+
+
+async def get_mentor_mentees(mentor_id: int) -> list[dict]:
+    """Получить список менти ментора."""
+    rows = await db.fetchall(
+        """SELECT id, mentee_full_name, mentee_telegram_tag, status, assigned_date, mentee_id
+           FROM buddy_mentorships 
+           WHERE mentor_id = ? 
+           ORDER BY assigned_date DESC""",
+        (mentor_id,)
+    )
+    return [
+        {
+            "id": r[0],
+            "full_name": r[1],
+            "telegram_tag": r[2],
+            "status": r[3],
+            "assigned_date": r[4],
+            "mentee_id": r[5]
+        }
+        for r in rows
+    ]
+
+
+async def get_user_mentor(user_id: int) -> dict | None:
+    """Получить ментора пользователя."""
+    row = await db.fetchone(
+        """SELECT m.id, m.mentee_full_name, m.mentee_telegram_tag, m.status, 
+                  m.assigned_date, u.user_id, u.username
+           FROM buddy_mentorships m
+           JOIN user_roles u ON m.mentor_id = u.id
+           WHERE m.mentee_id = ? AND m.status = 'active'
+           LIMIT 1""",
+        (user_id,)
+    )
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "mentee_name": row[1],
+        "mentee_tag": row[2],
+        "status": row[3],
+        "assigned_date": row[4],
+        "mentor_id": row[5],
+        "mentor_username": row[6]
+    }
+
+
+async def update_mentorship_status(mentorship_id: int, status: str) -> bool:
+    """Обновить статус наставничества."""
+    if status not in ('active', 'completed', 'paused', 'dropped'):
+        return False
+    return await db.execute(
+        "UPDATE buddy_mentorships SET status = ? WHERE id = ?",
+        (status, mentorship_id)
+    ) > 0
+
+
+async def delete_mentorship(mentorship_id: int) -> bool:
+    """Удалить наставничество."""
+    return await db.execute(
+        "DELETE FROM buddy_mentorships WHERE id = ?",
+        (mentorship_id,)
+    ) > 0
+
+
+async def get_mentorship_by_id(mentorship_id: int) -> dict | None:
+    """Получить наставничество по ID."""
+    row = await db.fetchone(
+        """SELECT id, mentor_id, mentee_id, mentee_full_name, 
+                  mentee_telegram_tag, status, assigned_date
+           FROM buddy_mentorships WHERE id = ?""",
+        (mentorship_id,)
+    )
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "mentor_id": row[1],
+        "mentee_id": row[2],
+        "full_name": row[3],
+        "telegram_tag": row[4],
+        "status": row[5],
+        "assigned_date": row[6]
+    }
 
 
 # Created by Техножрец R1sl1n
