@@ -195,6 +195,10 @@ STATE_MAP = {
     "input_users": lambda: __import__('handlers.roles', fromlist=['RoleStates']).RoleStates.input_users,
     "selecting_role": lambda: __import__('handlers.roles', fromlist=['RoleStates']).RoleStates.selecting_role,
     "selecting_user_to_delete": lambda: __import__('handlers.roles', fromlist=['RoleStates']).RoleStates.selecting_user_to_delete,
+    # Buddy
+    "input_full_name": lambda: __import__('handlers.buddy', fromlist=['BuddyStates']).BuddyStates.input_full_name,
+    "input_telegram_tag": lambda: __import__('handlers.buddy', fromlist=['BuddyStates']).BuddyStates.input_telegram_tag,
+    "input_assigned_date": lambda: __import__('handlers.buddy', fromlist=['BuddyStates']).BuddyStates.input_assigned_date,
 }
 
 
@@ -232,6 +236,10 @@ async def back_handler(message: Message, state: FSMContext):
                 "input_announcement": "Введите анонс:",
                 "input_users": "Введите пользователей (ID или @username):",
                 "selecting_role": "Выберите роль:",
+                # Buddy
+                "input_full_name": "Введите ФИО менти:",
+                "input_telegram_tag": "Введите тег в Telegram (@username):",
+                "input_assigned_date": "Введите дату назначения (ДД.ММ.ГГ):",
             }
             msg_text = back_messages.get(prev_state_key, "Вернулся на шаг назад.")
             await message.answer(f"🔙 {msg_text}", reply_markup=back_kb)
