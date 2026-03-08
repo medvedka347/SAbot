@@ -1,6 +1,0 @@
-FSM Navigation Failures Report
-======================================================================
-
-TEST: BACK from editing to selecting_item
-FAIL: BACK: Should return to selecting_item
-----------------------------------------------------------------------
