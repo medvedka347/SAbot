@@ -245,27 +245,25 @@ def parse_date_flexible(date_str: str) -> str | None:
     # Заменяем запятые на точки для унификации
     normalized = date_str.replace(',', '.')
     
-    # Паттерны: ДД.ММ.ГГ или ДД.ММ.ГГГГ
-    patterns = [
-        (r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$', lambda d, m, y: (d, m, y[2:])),  # 15.03.2026 -> 15.03.26
-        (r'^(\d{1,2})\.(\d{1,2})\.(\d{2})$', lambda d, m, y: (d, m, y)),      # 15.03.26
-    ]
+    # Паттерн: ДД.ММ.ГГ или ДД.ММ.ГГГГ
+    match = re.match(r'^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$', normalized)
+    if not match:
+        return None
     
-    for pattern, transformer in patterns:
-        match = re.match(pattern, normalized)
-        if match:
-            day, month, year = match.groups()
-            day = day.zfill(2)   # 5 -> 05
-            month = month.zfill(2)  # 3 -> 03
-            
-            # Валидация
-            try:
-                datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%y")
-                return f"{day}.{month}.{year}"
-            except ValueError:
-                return None
+    day, month, year = match.groups()
+    day = day.zfill(2)      # 5 -> 05
+    month = month.zfill(2)  # 3 -> 03
     
-    return None
+    # Преобразуем 4-значный год в 2-значный
+    if len(year) == 4:
+        year = year[2:]
+    
+    # Валидация
+    try:
+        datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%y")
+        return f"{day}.{month}.{year}"
+    except ValueError:
+        return None
 
 
 @router.message(BuddyStates.input_assigned_date, HasRole(ROLE_MENTOR))

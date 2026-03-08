@@ -212,6 +212,13 @@ async def back_handler(message: Message, state: FSMContext):
     logging.info(f"BACK_HANDLER: prev_state_key={prev_state_key!r}, type={type(prev_state_key)}")
     logging.info(f"BACK_HANDLER: data={data}")
     
+    # Специальная обработка для Льва при назначении бадди
+    if prev_state_key == "menu" and data.get("lion_action") == "assign_mentee":
+        # Возврат к выбору ментора для льва
+        from handlers.buddy import lion_assign_start
+        await lion_assign_start(message, state)
+        return
+    
     if prev_state_key and prev_state_key in STATE_MAP:
         # Возврат на предыдущий шаг
         try:
