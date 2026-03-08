@@ -160,7 +160,18 @@ async def buddy_add_start(message: Message, state: FSMContext):
 
 @router.message(BuddyStates.input_full_name, HasRole(ROLE_MENTOR))
 async def buddy_add_full_name(message: Message, state: FSMContext):
-    """Получение ФИО менти."""
+    """Получение ФИО менти (для ментора)."""
+    await _process_full_name(message, state)
+
+
+@router.message(BuddyStates.input_full_name, HasRole(ROLE_LION))
+async def lion_add_full_name(message: Message, state: FSMContext):
+    """Получение ФИО менти (для льва)."""
+    await _process_full_name(message, state)
+
+
+async def _process_full_name(message: Message, state: FSMContext):
+    """Общая логика получения ФИО."""
     if not message.text:
         return
     
@@ -181,7 +192,18 @@ async def buddy_add_full_name(message: Message, state: FSMContext):
 
 @router.message(BuddyStates.input_telegram_tag, HasRole(ROLE_MENTOR))
 async def buddy_add_telegram_tag(message: Message, state: FSMContext):
-    """Получение @username менти."""
+    """Получение @username менти (для ментора)."""
+    await _process_telegram_tag(message, state)
+
+
+@router.message(BuddyStates.input_telegram_tag, HasRole(ROLE_LION))
+async def lion_add_telegram_tag(message: Message, state: FSMContext):
+    """Получение @username менти (для льва)."""
+    await _process_telegram_tag(message, state)
+
+
+async def _process_telegram_tag(message: Message, state: FSMContext):
+    """Общая логика получения @username."""
     if not message.text:
         return
     
@@ -204,21 +226,64 @@ async def buddy_add_telegram_tag(message: Message, state: FSMContext):
     )
 
 
+def parse_date_flexible(date_str: str) -> str | None:
+    """
+    Гибкий парсинг даты. Поддерживает:
+    - Разделители: точка, запятая
+    - Год: 2 цифры (25) или 4 цифры (2025)
+    - Возвращает: ДД.ММ.ГГ (2 цифры года)
+    """
+    import re
+    from datetime import datetime
+    
+    date_str = date_str.strip()
+    
+    # Специальные слова
+    if date_str.lower() in ['сегодня', 'now', '-', 'today']:
+        return datetime.now().strftime("%d.%m.%y")
+    
+    # Заменяем запятые на точки для унификации
+    normalized = date_str.replace(',', '.')
+    
+    # Паттерны: ДД.ММ.ГГ или ДД.ММ.ГГГГ
+    patterns = [
+        (r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$', lambda d, m, y: (d, m, y[2:])),  # 15.03.2026 -> 15.03.26
+        (r'^(\d{1,2})\.(\d{1,2})\.(\d{2})$', lambda d, m, y: (d, m, y)),      # 15.03.26
+    ]
+    
+    for pattern, transformer in patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            day, month, year = match.groups()
+            day = day.zfill(2)   # 5 -> 05
+            month = month.zfill(2)  # 3 -> 03
+            
+            # Валидация
+            try:
+                datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%y")
+                return f"{day}.{month}.{year}"
+            except ValueError:
+                return None
+    
+    return None
+
+
 @router.message(BuddyStates.input_assigned_date, HasRole(ROLE_MENTOR))
 async def buddy_add_date(message: Message, state: FSMContext):
     """Получение даты и сохранение менти."""
     if not message.text:
         return
     
-    date_str = message.text.strip()
-    if date_str.lower() in ['сегодня', 'now', '-']:
-        from datetime import datetime
-        date_str = datetime.now().strftime("%d.%m.%y")
+    date_str = parse_date_flexible(message.text)
     
-    # Простая валидация формата ДД.ММ.ГГ
-    import re
-    if not re.match(r'^\d{2}\.\d{2}\.\d{2}$', date_str):
-        await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГ (например: 15.03.25)")
+    if date_str is None:
+        await message.answer(
+            "❌ Неверный формат даты.\n\n"
+            "Используйте:\n"
+            "• 15.03.26 или 15,03,26\n"
+            "• 15.03.2026 или 15,03,2026\n"
+            "• сегодня"
+        )
         return
     
     data = await state.get_data()
@@ -253,6 +318,58 @@ async def buddy_add_date(message: Message, state: FSMContext):
         
     except Exception as e:
         logging.error(f"Ошибка добавления менти: {e}")
+        await message.answer("❌ Ошибка при сохранении. Попробуйте позже.")
+        await state.clear()
+
+
+@router.message(BuddyStates.input_assigned_date, HasRole(ROLE_LION))
+async def lion_add_date(message: Message, state: FSMContext):
+    """Получение даты и сохранение менти (для Льва)."""
+    if not message.text:
+        return
+    
+    date_str = parse_date_flexible(message.text)
+    
+    if date_str is None:
+        await message.answer(
+            "❌ Неверный формат даты.\n\n"
+            "Используйте:\n"
+            "• 15.03.26 или 15,03,26\n"
+            "• 15.03.2026 или 15,03,2026\n"
+            "• сегодня"
+        )
+        return
+    
+    data = await state.get_data()
+    
+    # Получаем ID выбранного ментора (которого выбрал лев)
+    mentor_id = data.get('selected_mentor_id')
+    if not mentor_id:
+        await message.answer("❌ Ошибка: ментор не выбран")
+        await state.clear()
+        return
+    
+    try:
+        mentorship_id = await add_mentorship(
+            mentor_id=mentor_id,
+            mentee_full_name=data['full_name'],
+            mentee_telegram_tag=data.get('telegram_tag'),
+            assigned_date=date_str,
+            status='active'
+        )
+        
+        await message.answer(
+            f"✅ *Менти назначен ментору!*\n\n"
+            f"👤 {data['full_name']}\n"
+            f"📅 {date_str}\n"
+            f"📊 Статус: Активно",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
+        await state.clear()
+        
+    except Exception as e:
+        logging.error(f"Ошибка назначения менти: {e}")
         await message.answer("❌ Ошибка при сохранении. Попробуйте позже.")
         await state.clear()
 
