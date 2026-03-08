@@ -372,6 +372,9 @@ async def buddy_handler(message: Message, state: FSMContext):
             reply_markup=buddy_kb if message.chat.type == "private" else None
         )
     else:
+        # DEBUG: показываем какие роли найдены
+        await message.answer(f"DEBUG: Найденные роли: {roles}\nuser_id: {message.from_user.id}\nusername: @{message.from_user.username}")
+        
         # Для обычных пользователей - проверяем есть ли у них ментор
         from db_utils import get_user_mentor
         
