@@ -480,6 +480,13 @@ async def update_user_id_by_username(username: str, user_id: int) -> bool:
     if not username or not user_id:
         return False
     
+    # Проверяем, не занят ли уже этот user_id другим пользователем
+    existing_by_id = await get_user_by_id(user_id)
+    if existing_by_id:
+        # Этот user_id уже привязан к другому username - пропускаем
+        logging.warning(f"user_id {user_id} уже занят пользователем @{existing_by_id.get('username')}")
+        return False
+    
     # Проверяем, существует ли пользователь с таким username и пустым user_id
     existing = await get_user_by_username(username)
     if existing and existing.get("user_id") is None:
