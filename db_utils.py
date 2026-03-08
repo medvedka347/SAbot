@@ -264,27 +264,27 @@ def normalize_username(username: str | None) -> str | None:
 
 
 async def get_user_by_id(user_id: int) -> dict | None:
-    """Найти пользователя по ID."""
+    """Найти пользователя по ID. Возвращает внутренний id из user_roles."""
     row = await db.fetchone(
-        "SELECT user_id, username, role FROM user_roles WHERE user_id = ?",
+        "SELECT id, user_id, username, role FROM user_roles WHERE user_id = ?",
         (user_id,)
     )
     if row:
-        return {"user_id": row[0], "username": row[1], "role": row[2]}
+        return {"id": row[0], "user_id": row[1], "username": row[2], "role": row[3]}
     return None
 
 
 async def get_user_by_username(username: str) -> dict | None:
-    """Найти пользователя по username."""
+    """Найти пользователя по username. Возвращает внутренний id из user_roles."""
     username = normalize_username(username)
     if not username:
         return None
     row = await db.fetchone(
-        "SELECT user_id, username, role FROM user_roles WHERE username = ?",
+        "SELECT id, user_id, username, role FROM user_roles WHERE username = ?",
         (username,)
     )
     if row:
-        return {"user_id": row[0], "username": row[1], "role": row[2]}
+        return {"id": row[0], "user_id": row[1], "username": row[2], "role": row[3]}
     return None
 
 
