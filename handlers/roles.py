@@ -85,6 +85,7 @@ async def roles_menu(message: Message, state: FSMContext):
         return
     
     await state.set_state(RoleStates.menu)
+    await state.update_data(_prev_state="menu")
     text = (
         "👥 *Управление ролями пользователей*\n\n"
         "📋 *Список* — просмотр всех пользователей\n"

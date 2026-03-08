@@ -98,6 +98,7 @@ async def buddy_list_mentees(message: Message, state: FSMContext):
         return
     
     await state.set_state(BuddyStates.menu)
+    await state.update_data(_prev_state="menu")
     
     # Получаем внутренний ID ментора из таблицы user_roles
     # Это тот же пользователь, но нам нужен его ID в БД (user_roles.id)

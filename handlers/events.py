@@ -65,6 +65,7 @@ async def events_menu(message: Message, state: FSMContext):
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     await state.set_state(EventStates.menu)
+    await state.update_data(_prev_state="menu")
     await message.answer("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
 
 

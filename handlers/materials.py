@@ -87,7 +87,7 @@ async def material_select_stage(message: Message, state: FSMContext):
         await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
-    await state.update_data(action="show_list")
+    await state.update_data(action="show_list", _prev_state="menu")
     await message.answer("Выберите раздел:", reply_markup=stage_kb)
 
 
@@ -166,7 +166,7 @@ async def material_add_start(message: Message, state: FSMContext):
         await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
-    await state.update_data(action="add_material")
+    await state.update_data(action="add_material", _prev_state="menu")
     await message.answer("➕ Выберите раздел для добавления:", reply_markup=stage_kb)
 
 
@@ -250,7 +250,7 @@ async def material_edit_select_stage(message: Message, state: FSMContext):
         await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
-    await state.update_data(action="select_for_edit")
+    await state.update_data(action="select_for_edit", _prev_state="menu")
     await message.answer("✏️ Выберите раздел:", reply_markup=stage_kb)
 
 
@@ -343,7 +343,7 @@ async def material_delete_select_stage(message: Message, state: FSMContext):
         await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
-    await state.update_data(action="select_for_delete")
+    await state.update_data(action="select_for_delete", _prev_state="menu")
     await message.answer("🗑️ Выберите раздел:", reply_markup=stage_kb)
 
 
