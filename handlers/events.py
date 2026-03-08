@@ -106,7 +106,13 @@ async def event_add_type(message: Message, state: FSMContext):
     if len(message.text) > 100:
         await message.answer("❌ Тип события слишком длинный (макс 100 символов)")
         return
-    await state.update_data(event_type=message.text, _prev_state="input_type")
+    
+    # Сохраняем историю для навигации назад
+    data = await state.get_data()
+    history = data.get("_state_history", [])
+    history.append("menu")  # Пришли из меню событий
+    
+    await state.update_data(event_type=message.text, _prev_state="input_type", _state_history=history)
     await state.set_state(EventStates.input_datetime)
     await message.answer(
         "📅 *Введите дату и время*\n\n"
@@ -134,7 +140,12 @@ async def event_add_datetime(message: Message, state: FSMContext):
         await message.answer(error, parse_mode="Markdown")
         return
     
-    await state.update_data(event_datetime=dt_iso, _prev_state="input_datetime")
+    # Сохраняем историю для навигации назад
+    data = await state.get_data()
+    history = data.get("_state_history", [])
+    history.append("input_datetime")
+    
+    await state.update_data(event_datetime=dt_iso, _prev_state="input_link_evt", _state_history=history)
     await state.set_state(EventStates.input_link)
     await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
 
@@ -150,7 +161,12 @@ async def event_add_link(message: Message, state: FSMContext):
     elif not (link.startswith('http://') or link.startswith('https://')):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
-    await state.update_data(event_link=link, _prev_state="input_link_evt", _prev_chain="input_datetime")
+    # Сохраняем историю для навигации назад
+    data = await state.get_data()
+    history = data.get("_state_history", [])
+    history.append("input_link_evt")
+    
+    await state.update_data(event_link=link, _prev_state="input_announcement", _state_history=history)
     await state.set_state(EventStates.input_announcement)
     await message.answer("Введите анонс:", reply_markup=back_kb)
 
@@ -180,6 +196,11 @@ async def event_add_announcement(message: Message, state: FSMContext):
     
     await state.update_data(event_announcement=ann)
     
+    # Сохраняем историю для навигации назад
+    data = await state.get_data()
+    history = data.get("_state_history", [])
+    history.append("input_link_evt")
+    
     # Если не настроена группа для анонсов - сразу сохраняем
     if not ANNOUNCEMENT_GROUP_ID:
         try:
@@ -192,7 +213,7 @@ async def event_add_announcement(message: Message, state: FSMContext):
         return
     
     # Спрашиваем про размещение анонса
-    await state.update_data(_prev_state="input_announcement")
+    await state.update_data(_prev_state="input_announcement", _state_history=history)
     await state.set_state(EventStates.confirm_announce)
     preview = (
         f"📅 *{event_type}*\n"
@@ -312,7 +333,8 @@ async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
         await safe_edit_text(callback, "❌ Не найдено")
         return
     
-    await state.update_data(edit_id=ev_id, edit_ev=ev, _prev_state="selecting_item")
+    # Сохраняем историю для навигации назад
+    await state.update_data(edit_id=ev_id, edit_ev=ev, _prev_state="selecting_item", _state_history=[])
     await state.set_state(EventStates.editing)
     await safe_edit_text(
         callback,

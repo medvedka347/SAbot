@@ -211,13 +211,18 @@ STATE_MAP = {
 
 @router.message(F.text.in_(["🔙 Назад", "Назад"]))
 async def back_handler(message: Message, state: FSMContext):
-    """Обработчик 'Назад' - возвращает на предыдущий шаг или в главное меню."""
+    """Обработчик 'Назад' - возвращает на предыдущий шаг или в главное меню.
+    
+    Использует стек истории _state_history для поддержки многоуровневого возврата.
+    """
     data = await state.get_data()
+    
+    # Пробуем сначала новый стек истории
+    state_history = data.get("_state_history", [])
     prev_state_key = data.get("_prev_state")
     
     # DEBUG: логируем что пришло
-    logging.info(f"BACK_HANDLER: prev_state_key={prev_state_key!r}, type={type(prev_state_key)}")
-    logging.info(f"BACK_HANDLER: data={data}")
+    logging.info(f"BACK_HANDLER: state_history={state_history}, prev_state_key={prev_state_key!r}")
     
     # Специальная обработка для Льва при назначении бадди
     if prev_state_key == "menu" and data.get("lion_action") == "assign_mentee":
@@ -226,8 +231,47 @@ async def back_handler(message: Message, state: FSMContext):
         await lion_assign_start(message, state)
         return
     
+    # Используем стек истории если он есть
+    if state_history:
+        # Берём последнее состояние из стека
+        prev_state_key = state_history.pop()
+        
+        if prev_state_key in STATE_MAP:
+            try:
+                prev_state = STATE_MAP[prev_state_key]()
+                await state.set_state(prev_state)
+                # Сохраняем обновлённый стек
+                await state.update_data(_state_history=state_history)
+                
+                # Формируем сообщение в зависимости от состояния
+                back_messages = {
+                    "selecting_stage": "Выберите раздел:",
+                    "selecting_stage_public": "Выберите раздел:",
+                    "input_title": "Введите название:",
+                    "input_link": "Введите ссылку (https://...):",
+                    "input_desc": "Введите описание (или 'пропустить'):",
+                    "selecting_item": "Выберите из списка:",
+                    "editing": "Отправьте новые данные (используйте '.' для пропуска):",
+                    "input_type": "Введите тип (Вебинар, Митап, Квиз):",
+                    "input_datetime": "Введите дату `2024-12-31 18:00:00`:",
+                    "input_link_evt": "Введите ссылку (или 'нет'):",
+                    "input_announcement": "Введите анонс:",
+                    "input_users": "Введите пользователей (ID или @username):",
+                    "selecting_role": "Выберите роль:",
+                    # Buddy
+                    "input_full_name": "Введите ФИО менти:",
+                    "input_telegram_tag": "Введите тег в Telegram (@username):",
+                    "input_assigned_date": "Введите дату назначения (ДД.ММ.ГГ):",
+                }
+                msg_text = back_messages.get(prev_state_key, "Вернулся на шаг назад.")
+                await message.answer(f"🔙 {msg_text}", reply_markup=back_kb)
+                return
+            except Exception as e:
+                logging.error(f"BACK_HANDLER ERROR (stack): {e}", exc_info=True)
+                # При ошибке продолжаем к fallback
+    
+    # Fallback на старую систему _prev_state/_prev_chain
     if prev_state_key and prev_state_key in STATE_MAP:
-        # Возврат на предыдущий шаг
         try:
             prev_state = STATE_MAP[prev_state_key]()
             await state.set_state(prev_state)
@@ -334,7 +378,7 @@ async def buddy_handler(message: Message, state: FSMContext):
                 "Тебе пока не назначен бадди.\n"
                 "Ожидай назначения от администратора или ментора.",
                 parse_mode="Markdown"
-    )
+            )
 
 
 # ==================== Access Denied Handlers ====================

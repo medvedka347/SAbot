@@ -126,7 +126,7 @@ async def handle_stage_selection_admin(message: Message, state: FSMContext):
     
     # Добавление материала
     if action == "add_material":
-        await state.update_data(stage=stage, _prev_state="selecting_stage")
+        await state.update_data(stage=stage, _prev_state="selecting_stage", _state_history=[])
         await state.set_state(MaterialStates.input_title)
         await message.answer("Введите название:", reply_markup=back_kb)
         return
@@ -179,7 +179,12 @@ async def material_add_title(message: Message, state: FSMContext):
         await message.answer("❌ Название слишком длинное (макс 200 символов)")
         return
     
-    await state.update_data(title=message.text, _prev_state="input_title")
+    # Сохраняем историю для навигации назад
+    data = await state.get_data()
+    history = data.get("_state_history", [])
+    history.append("selecting_stage")
+    
+    await state.update_data(title=message.text, _prev_state="input_title", _state_history=history)
     await state.set_state(MaterialStates.input_link)
     await message.answer("Введите ссылку (https://...):", reply_markup=back_kb)
 
@@ -197,7 +202,12 @@ async def material_add_link(message: Message, state: FSMContext):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
     
-    await state.update_data(link=link, _prev_state="input_link")
+    # Сохраняем историю для навигации назад
+    data = await state.get_data()
+    history = data.get("_state_history", [])
+    history.append("input_title")
+    
+    await state.update_data(link=link, _prev_state="input_link", _state_history=history)
     await state.set_state(MaterialStates.input_desc)
     await message.answer("Введите описание (или 'пропустить'):", reply_markup=back_kb)
 
@@ -267,12 +277,13 @@ async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
     
     # Получаем текущий _prev_state (selecting_stage) для цепочки навигации
     data = await state.get_data()
-    prev_chain = data.get("_prev_state")
+    history = data.get("_state_history", [])
+    history.append("selecting_stage")  # Добавляем selecting_stage в историю
     await state.update_data(
         edit_id=mat_id, 
         edit_item=mat, 
         _prev_state="selecting_item",
-        _prev_chain=prev_chain  # Сохраняем цепочку для двойного назад
+        _state_history=history  # Сохраняем историю для многоуровневого возврата
     )
     await state.set_state(MaterialStates.editing)
     

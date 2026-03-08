@@ -148,7 +148,8 @@ async def buddy_add_start(message: Message, state: FSMContext):
         return
     
     await state.set_state(BuddyStates.input_full_name)
-    await state.update_data(_prev_state="menu")
+    # Инициализируем историю состояний (первый шаг - нет предыдущих состояний для возврата)
+    await state.update_data(_prev_state="input_full_name", _state_history=[])
     
     await message.answer(
         "➕ *Добавление нового менти*\n\n"
@@ -180,7 +181,12 @@ async def _process_full_name(message: Message, state: FSMContext):
         await message.answer("❌ ФИО должно быть от 2 до 100 символов")
         return
     
-    await state.update_data(full_name=full_name, _prev_state="input_full_name")
+    # Сохраняем историю для навигации назад
+    data = await state.get_data()
+    history = data.get("_state_history", [])
+    # На первом шаге нет предыдущего состояния для возврата
+    
+    await state.update_data(full_name=full_name, _prev_state="input_full_name", _state_history=history)
     await state.set_state(BuddyStates.input_telegram_tag)
     
     await message.answer(
@@ -213,7 +219,12 @@ async def _process_telegram_tag(message: Message, state: FSMContext):
     elif not tag.startswith('@'):
         tag = '@' + tag
     
-    await state.update_data(telegram_tag=tag, _prev_state="input_telegram_tag")
+    # Сохраняем историю для навигации назад
+    data = await state.get_data()
+    history = data.get("_state_history", [])
+    history.append("input_full_name")
+    
+    await state.update_data(telegram_tag=tag, _prev_state="input_telegram_tag", _state_history=history)
     await state.set_state(BuddyStates.input_assigned_date)
     
     from datetime import datetime
@@ -722,7 +733,8 @@ async def lion_assign_start(message: Message, state: FSMContext):
         return
     
     await state.set_state(BuddyStates.menu)
-    await state.update_data(lion_action="assign_mentee", _prev_state="menu")
+    # Для Lion assign используем специальную логику в back_handler
+    await state.update_data(lion_action="assign_mentee", _prev_state="menu", _state_history=[])
     
     keyboard = []
     for mentor in mentors:
@@ -752,7 +764,8 @@ async def lion_select_mentor_for_assign(callback: CallbackQuery, state: FSMConte
         return
     
     logging.info(f"LION_SELECT_MENTOR: mentor_id={mentor_id}")
-    await state.update_data(selected_mentor_id=mentor_id, _prev_state="menu")
+    # Для Lion assign используем специальную логику в back_handler
+    await state.update_data(selected_mentor_id=mentor_id, _prev_state="input_full_name", _state_history=[])
     await state.set_state(BuddyStates.input_full_name)
     
     # Проверяем, что сохранилось

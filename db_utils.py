@@ -705,6 +705,9 @@ class AuthMiddleware(BaseMiddleware):
     
     Проверяет, есть ли пользователь в БД. Если да — сохраняет роль в data.
     Если нет — блокирует доступ.
+    
+    Исключение: команда /start пропускается всегда (start_handler сам обрабатывает
+    неавторизованных пользователей - считает неудачные попытки и выдает баны).
     """
     async def __call__(self, handler, event, data):
         # Пропускаем не-сообщения (callback_query и др.)
@@ -713,6 +716,11 @@ class AuthMiddleware(BaseMiddleware):
             
         user_id = event.from_user.id
         username = event.from_user.username
+        
+        # Пропускаем /start команду - start_handler сам обработает неавторизованных
+        # (включая логику неудачных попыток и банов)
+        if hasattr(event, 'text') and event.text and event.text.startswith('/start'):
+            return await handler(event, data)
         
         # Проверяем роль один раз
         role = await get_user_role(user_id=user_id, username=username)
