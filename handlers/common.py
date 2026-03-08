@@ -17,7 +17,7 @@ from aiogram.fsm.context import FSMContext
 
 from config import ROLE_ADMIN, ROLE_MENTOR, ROLE_LION
 from db_utils import (
-    get_user_role, get_user_roles, cleanup_expired_bans, get_ban_status, 
+    get_user_roles, cleanup_expired_bans, get_ban_status, 
     record_failed_attempt, clear_failed_attempts, 
     get_user_by_username, update_user_id_by_username,
     get_user_by_id, get_user_mentor
@@ -39,6 +39,9 @@ async def start_handler(message: Message):
     if message.chat.type != "private":
         return
     
+    # Показываем typing для лучшего UX
+    await message.chat.do("typing")
+    
     user_id = message.from_user.id
     username = message.from_user.username
     
@@ -59,10 +62,10 @@ async def start_handler(message: Message):
         )
         return
     
-    # Проверяем роль
-    role = await get_user_role(user_id=user_id, username=username)
+    # Проверяем роли (поддержка мультиролей)
+    roles = await get_user_roles(user_id=user_id, username=username)
     
-    if not role:
+    if not roles:
         # Записываем неудачную попытку
         new_ban = await record_failed_attempt(user_id=user_id, username=username)
         
@@ -91,12 +94,14 @@ async def start_handler(message: Message):
             await update_user_id_by_username(username, user_id)
             logging.info(f"Подхвачен user_id {user_id} для @{username} при первой авторизации")
     
-    welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
+    # Формируем строку ролей для отображения
+    role_display = ', '.join(roles) if roles else 'user'
+    welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
     
-    # Выбираем клавиатуру по роли
-    if role == ROLE_ADMIN:
+    # Выбираем клавиатуру по роли (приоритет: admin > mentor > user)
+    if ROLE_ADMIN in roles:
         main_kb = admin_kb
-    elif role == ROLE_MENTOR:
+    elif ROLE_MENTOR in roles:
         main_kb = mentor_kb
     else:
         main_kb = user_kb
@@ -117,7 +122,7 @@ async def help_handler(message: Message):
     
     user_id = message.from_user.id
     username = message.from_user.username
-    role = await get_user_role(user_id=user_id, username=username)
+    roles = await get_user_roles(user_id=user_id, username=username)
     
     common = (
         "📚 *Материалы* — учебные материалы по разделам\n"
@@ -127,7 +132,7 @@ async def help_handler(message: Message):
         "🔍 `/search <запрос>` — поиск по материалам"
     )
     
-    if role == ROLE_ADMIN:
+    if ROLE_ADMIN in roles:
         extra = (
             "\n\n👑 *Администратор:*\n"
             "📦 Управление материалами (CRUD)\n"
@@ -135,9 +140,9 @@ async def help_handler(message: Message):
             "📋 Управление событиями\n"
             "🚫 Управление банами — просмотр и снятие банов"
         )
-    elif role == ROLE_MENTOR:
+    elif ROLE_MENTOR in roles:
         extra = "\n\n🎓 *Ментор:*\n⚙️ Панель ментора"
-    elif role:
+    elif roles:
         extra = ""
     else:
         extra = "\n\n❌ У вас нет доступа. Обратитесь к администратору."
@@ -162,13 +167,15 @@ async def admin_handler(message: Message, state: FSMContext):
         return
     
     await state.clear()
-    role = await get_user_role(user_id=message.from_user.id)
-    kb_map = {ROLE_ADMIN: admin_kb, ROLE_MENTOR: mentor_kb}
-    text_map = {ROLE_ADMIN: "🔧 Панель администратора", ROLE_MENTOR: "🎓 Панель ментора"}
+    roles = await get_user_roles(user_id=message.from_user.id)
     
-    if role in kb_map:
-        panel_kb = kb_map[role] if message.chat.type == "private" else None
-        await message.answer(text_map[role], reply_markup=panel_kb)
+    # Определяем клавиатуру и текст по приоритету ролей
+    if ROLE_ADMIN in roles:
+        panel_kb = admin_kb if message.chat.type == "private" else None
+        await message.answer("🔧 Панель администратора", reply_markup=panel_kb)
+    elif ROLE_MENTOR in roles:
+        panel_kb = mentor_kb if message.chat.type == "private" else None
+        await message.answer("🎓 Панель ментора", reply_markup=panel_kb)
     else:
         await message.answer("❌ Нет доступа.")
 
@@ -258,8 +265,9 @@ async def back_handler(message: Message, state: FSMContext):
     
     # Нет истории или ошибка - в главное меню
     await state.clear()
-    role = await get_user_role(user_id=message.from_user.id, username=message.from_user.username)
-    welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоль: *{role}*"
+    roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
+    role_display = ', '.join(roles) if roles else 'user'
+    welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
     kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
     await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
 

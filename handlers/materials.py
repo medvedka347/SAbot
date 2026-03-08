@@ -11,7 +11,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardButton
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import STAGES, ROLE_ADMIN
 from db_utils import (
@@ -20,7 +20,11 @@ from db_utils import (
 )
 from utils import (
     check_rate_limit, kb, inline_kb, back_kb, stage_kb,
-    get_stage_key, escape_md, safe_edit_text, get_main_keyboard
+    get_stage_key, escape_md, safe_edit_text, get_main_keyboard,
+    validate_callback_data
+)
+from audit_logger import (
+    log_material_create, log_material_delete, log_material_update
 )
 
 router = Router(name="materials")
@@ -111,7 +115,7 @@ async def handle_stage_selection_admin(message: Message, state: FSMContext):
         stage_name = STAGES[stage]
         
         if not mats:
-            text = f"📭 *{stage_name}*\n\nПусто."
+            text = f"📭 *{stage_name}*\n\nПока нет материалов.\n\n💡 Администратор скоро добавит 😊"
         else:
             lines = [format_material(m) for m in mats]
             text = f"📚 *{stage_name}* ({len(mats)})\n\n" + "\n".join(lines)
@@ -212,7 +216,16 @@ async def material_add_desc(message: Message, state: FSMContext):
         return
     
     data = await state.get_data()
-    await add_material(data['stage'], data['title'], data['link'], desc)
+    mat_id = await add_material(data['stage'], data['title'], data['link'], desc)
+    
+    # Audit log
+    log_material_create(
+        user_id=message.from_user.id,
+        mat_id=mat_id,
+        title=data['title'],
+        stage=data['stage']
+    )
+    
     await message.answer(f"✅ Добавлено в *{STAGES[data['stage']]}*!", parse_mode="Markdown")
     await materials_menu(message, state)
 
@@ -234,11 +247,16 @@ async def material_edit_select_stage(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("edit_mat:"), HasRole(ROLE_ADMIN))
 async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
     """Callback для выбора материала на редактирование."""
+    # Rate limit check
+    ok, wait = check_rate_limit(callback.from_user.id)
+    if not ok:
+        await callback.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.", show_alert=True)
+        return
     await callback.answer()
     
-    try:
-        mat_id = int(callback.data.split(":")[1])
-    except (ValueError, IndexError):
+    # Validate callback data
+    mat_id = validate_callback_data(callback.data, 'edit_mat', 'int')
+    if mat_id is None:
         await safe_edit_text(callback, "❌ Некорректные данные")
         return
     
@@ -319,8 +337,43 @@ async def material_delete_select_stage(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("del_mat:"), HasRole(ROLE_ADMIN))
-async def material_delete_callback(callback: CallbackQuery, state: FSMContext):
-    """Callback для удаления материала."""
+async def material_delete_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение удаления материала."""
+    # Rate limit check
+    ok, wait = check_rate_limit(callback.from_user.id)
+    if not ok:
+        await callback.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.", show_alert=True)
+        return
+    await callback.answer()
+    
+    try:
+        mat_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await safe_edit_text(callback, "❌ Некорректные данные")
+        return
+    
+    mat = await get_material(mat_id)
+    if not mat:
+        await safe_edit_text(callback, "❌ Материал не найден")
+        return
+    
+    # Подтверждение удаления
+    await callback.message.edit_text(
+        f"🗑️ *Удалить материал?*\n\n"
+        f"📚 {mat['title']}\n"
+        f"🔗 {mat['link'][:50]}...\n\n"
+        f"⚠️ Это действие нельзя отменить.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"conf_del_mat:{mat_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_del_mat")]
+        ])
+    )
+
+
+@router.callback_query(F.data.startswith("conf_del_mat:"), HasRole(ROLE_ADMIN))
+async def material_delete_execute(callback: CallbackQuery, state: FSMContext):
+    """Выполнение удаления материала."""
     await callback.answer()
     
     try:
@@ -331,11 +384,30 @@ async def material_delete_callback(callback: CallbackQuery, state: FSMContext):
     
     mat = await get_material(mat_id)
     if await delete_material(mat_id):
+        # Audit log
+        log_material_delete(
+            user_id=callback.from_user.id,
+            mat_id=mat_id,
+            title=mat['title'] if mat else 'Unknown'
+        )
         await safe_edit_text(callback, f"✅ Удалено: {mat['title'] if mat else mat_id}")
     else:
-        await safe_edit_text(callback, "❌ Ошибка")
+        await safe_edit_text(callback, "❌ Ошибка при удалении")
     
-    await state.clear()
+    # Возвращаемся в меню управления материалами
+    await state.set_state(MaterialStates.menu)
+    await callback.message.answer("📦 *Управление материалами*", parse_mode="Markdown", reply_markup=materials_menu_kb)
+
+
+@router.callback_query(F.data == "cancel_del_mat", HasRole(ROLE_ADMIN))
+async def material_delete_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена удаления материала."""
+    await callback.answer("❌ Удаление отменено")
+    await callback.message.edit_text("❌ Удаление отменено")
+    
+    # Возвращаемся в меню управления материалами
+    await state.set_state(MaterialStates.menu)
+    await callback.message.answer("📦 *Управление материалами*", parse_mode="Markdown", reply_markup=materials_menu_kb)
 
 
 # ==================== Admin: Stats ====================
@@ -385,11 +457,14 @@ async def handle_stage_selection_public(message: Message, state: FSMContext):
     if not stage:
         return
     
+    # Показываем typing пока загружаем материалы
+    await message.chat.do("typing")
+    
     mats = await get_materials(stage)
     stage_name = STAGES[stage]
     
     if not mats:
-        text = f"📭 *{stage_name}*\n\nПока пусто."
+        text = f"📭 *{stage_name}*\n\nПока нет материалов.\n\n💡 Загляните позже — мы добавляем новые материалы регулярно!"
     else:
         lines = [f"• [{m['title']}]({m['link']})" for m in mats]
         text = f"📚 *{stage_name}*\n\n" + "\n".join(lines)

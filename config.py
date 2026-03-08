@@ -30,6 +30,30 @@ STAGES = {
 # --- Настройки группы для анонсов ---
 ANNOUNCEMENT_GROUP_ID = os.getenv("ANNOUNCEMENT_GROUP_ID", "")
 ANNOUNCEMENT_TOPIC_ID = os.getenv("ANNOUNCEMENT_TOPIC_ID", "")
+
+# --- Менторы для мок-интервью ---
+MOCK_MENTORS = {
+    "Влад": {
+        "cal_link": None,
+        "available": False,
+        "emoji": "👤"
+    },
+    "Регина": {
+        "cal_link": "https://cal.com/ocpocmak/mock",
+        "available": True,
+        "emoji": "👤"
+    },
+    "Руслан": {
+        "cal_link": "https://cal.com/akhmadishin/мок",
+        "available": True,
+        "emoji": "👤"
+    },
+    "Иван": {
+        "cal_link": None,
+        "available": False,
+        "emoji": "👤"
+    },
+}
 # Конвертируем в int если заданы
 if ANNOUNCEMENT_GROUP_ID:
     ANNOUNCEMENT_GROUP_ID = int(ANNOUNCEMENT_GROUP_ID)

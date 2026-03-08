@@ -2,12 +2,13 @@
 Модуль записи на мок-интервью.
 
 Включает:
-- Меню выбора ментора
+- Меню выбора ментора (динамически из конфига)
 - Ссылки на календари для записи
 """
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
+from config import MOCK_MENTORS
 from utils import check_rate_limit, user_kb
 
 router = Router(name="mocks")
@@ -15,16 +16,18 @@ router = Router(name="mocks")
 
 # ==================== Keyboards ====================
 
-mock_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="👤 Влад")],
-        [KeyboardButton(text="👤 Регина")],
-        [KeyboardButton(text="👤 Руслан")],
-        [KeyboardButton(text="👤 Иван")],
-        [KeyboardButton(text="🔙 Назад")],
-    ],
-    resize_keyboard=True
-)
+def build_mock_kb() -> ReplyKeyboardMarkup:
+    """Создать клавиатуру менторов из конфига."""
+    keyboard = []
+    for mentor_name, mentor_data in MOCK_MENTORS.items():
+        emoji = mentor_data.get("emoji", "👤")
+        keyboard.append([KeyboardButton(text=f"{emoji} {mentor_name}")])
+    keyboard.append([KeyboardButton(text="🔙 Назад")])
+    
+    return ReplyKeyboardMarkup(
+        keyboard=keyboard,
+        resize_keyboard=True
+    )
 
 
 # ==================== Handlers ====================
@@ -37,25 +40,30 @@ async def booking_handler(message: Message):
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     
+    # Формируем список доступных менторов
+    available_mentors = [
+        name for name, data in MOCK_MENTORS.items() 
+        if data.get("available")
+    ]
+    available_text = ", ".join(available_mentors) if available_mentors else "пока нет"
+    
     await message.answer(
         "📋 *Запись на мок*\n\n"
         "У нас проводится 2-4 мока\n\n"
         "⚠️ *Моки необходимо проходить после составления легенды!*\n\n"
-        "Моки можно проходить в любом порядке, снизу только рекомендованный порядок.\n"
-        "Если кто-то из собеседующих недоступен, то идите к другому, а потом идите к недоступному когда он станет доступен.\n\n"
+        f"*Доступные менторы:* {available_text}\n\n"
+        "Моки можно проходить в любом порядке.\n"
+        "Если кто-то из собеседующих недоступен, выберите другого.\n\n"
         "*Действия перед моком:*\n"
-        "1️⃣ Предупредить собеседующего (чисто на всякий случай)\n"
+        "1️⃣ Предупредить собеседующего\n"
         "2️⃣ Скинуть резюме собеседующему\n\n"
-        "_Если очередь на мок больше 3 дней, то проверьте доступность других собеседующих._\n"
-        "_Если очередь на мок больше 3 дней у всех, то напишите в ЛС. Найду слот_\n\n"
-        '*Порядок "Первый, второй, третий, четвёртый" не является порядком, это просто список. '
-        'Порядок может быть любым. Это написано для удобства структуры и читаемости*',
+        "_Если очередь на мок больше 3 дней — напишите в ЛС администратору._",
         parse_mode="Markdown",
-        reply_markup=(mock_kb if message.chat.type == "private" else None)
+        reply_markup=(build_mock_kb() if message.chat.type == "private" else None)
     )
 
 
-@router.message(F.text.in_(["👤 Влад", "👤 Регина", "👤 Руслан", "👤 Иван"]))
+@router.message(F.text.regexp(rf"^👤 ({'|'.join(MOCK_MENTORS.keys())})$"))
 async def mock_select_handler(message: Message):
     """Обработчик выбора ментора для мока."""
     ok, wait = check_rate_limit(message.from_user.id)
@@ -63,29 +71,30 @@ async def mock_select_handler(message: Message):
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     
+    # Извлекаем имя ментора (убираем эмодзи)
     mentor = message.text.replace("👤 ", "")
     
-    if mentor == "Руслан":
+    if mentor not in MOCK_MENTORS:
+        await message.answer("❌ Ментор не найден")
+        return
+    
+    mentor_data = MOCK_MENTORS[mentor]
+    cal_link = mentor_data.get("cal_link")
+    available = mentor_data.get("available", False)
+    
+    if available and cal_link:
         await message.answer(
-            f"👤 *Руслан*\n\n"
-            f"[Записаться на мок](https://cal.com/akhmadishin/мок)\n\n"
+            f"👤 *{mentor}*\n\n"
+            f"[Записаться на мок]({cal_link})\n\n"
             f"Нажмите на ссылку для выбора удобного времени.",
             parse_mode="Markdown",
             reply_markup=(user_kb if message.chat.type == "private" else None)
         )
-    elif mentor == "Регина":
-        await message.answer(
-            f"👤 *Регина*\n\n"
-            f"[Записаться на мок](https://cal.com/ocpocmak/mock)\n\n"
-            f"Нажмите на ссылку для выбора удобного времени.",
-            parse_mode="Markdown",
-            reply_markup=(user_kb if message.chat.type == "private" else None)
-        )
-    elif mentor in ["Влад", "Иван"]:
+    else:
         await message.answer(
             f"👤 *{mentor}*\n\n"
             f"_Запись пока недоступна_\n\n"
             f"Выберите другого ментора или попробуйте позже.",
             parse_mode="Markdown",
-            reply_markup=(mock_kb if message.chat.type == "private" else None)
+            reply_markup=(build_mock_kb() if message.chat.type == "private" else None)
         )

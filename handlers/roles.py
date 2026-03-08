@@ -13,7 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 from config import ROLE_ADMIN, ROLES
-from db_utils import get_all_users, set_users_batch, delete_user, HasRole
+from db_utils import get_all_users, set_users_batch, delete_user, HasRole, get_user_by_id, get_user_by_username
 from utils import (
     check_rate_limit, kb, inline_kb, back_kb,
     get_role_emoji, format_user, parse_users_input, escape_md
@@ -151,6 +151,9 @@ async def roles_show(message: Message, state: FSMContext):
         await message.answer("❌ Нет прав.")
         return
     
+    # Показываем typing пока загружаем пользователей
+    await message.chat.do("typing")
+    
     users = await get_all_users()
     if not users:
         await message.answer("📭 Пользователей нет")
@@ -261,8 +264,8 @@ async def role_receive_users(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("set_role:"), HasRole(ROLE_ADMIN))
-async def role_set_callback(callback: CallbackQuery, state: FSMContext):
-    """Callback установки роли."""
+async def role_set_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение назначения роли."""
     await callback.answer()
     role = callback.data.split(":")[1]
     data = await state.get_data()
@@ -273,11 +276,65 @@ async def role_set_callback(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         return
     
+    # Сохраняем выбранную роль
+    await state.update_data(selected_role=role)
+    
+    # Формируем превью пользователей
+    preview = []
+    for i, u in enumerate(users[:5], 1):
+        parts = []
+        if u.get("user_id"):
+            parts.append(f"ID:{u['user_id']}")
+        if u.get("username"):
+            parts.append(f"@{u['username']}")
+        preview.append(f"{i}. {' + '.join(parts)}")
+    
+    if len(users) > 5:
+        preview.append(f"... и ещё {len(users) - 5}")
+    
+    # Показываем подтверждение
+    role_emoji = {"user": "👤", "mentor": "🎓", "admin": "👑", "lion": "🦁"}
+    await callback.message.edit_text(
+        f"🎯 *Назначить роль?*\n\n"
+        f"Роль: {role_emoji.get(role, '👤')} `{role}`\n"
+        f"Пользователей: *{len(users)}*\n\n"
+        f"Список:\n" + "\n".join(preview) + "\n\n"
+        f"Подтвердите назначение:",
+        parse_mode="Markdown",
+        reply_markup=inline_kb([
+            [InlineKeyboardButton(text="✅ Да, назначить", callback_data="conf_set_role")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_set_role")]
+        ])
+    )
+
+
+@router.callback_query(F.data == "conf_set_role", HasRole(ROLE_ADMIN))
+async def role_set_execute(callback: CallbackQuery, state: FSMContext):
+    """Выполнение назначения роли."""
+    await callback.answer()
+    
+    data = await state.get_data()
+    users = data.get("users_to_assign", [])
+    role = data.get("selected_role")
+    
+    if not users or not role:
+        await callback.message.edit_text("❌ Ошибка: данные не найдены")
+        await state.clear()
+        return
+    
     await set_users_batch(users, role)
     
     await callback.message.edit_text(
         f"✅ Роль `{role}` назначена для *{len(users)}* пользователей!"
     )
+    await state.clear()
+
+
+@router.callback_query(F.data == "cancel_set_role", HasRole(ROLE_ADMIN))
+async def role_set_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена назначения роли."""
+    await callback.answer("❌ Назначение отменено")
+    await callback.message.edit_text("❌ Назначение роли отменено")
     await state.clear()
 
 
@@ -320,8 +377,8 @@ async def role_delete_start(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("del_user:"), HasRole(ROLE_ADMIN))
-async def role_delete_callback(callback: CallbackQuery, state: FSMContext):
-    """Callback удаления пользователя."""
+async def role_delete_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение удаления пользователя."""
     await callback.answer()
     
     if callback.data == "noop":
@@ -336,14 +393,64 @@ async def role_delete_callback(callback: CallbackQuery, state: FSMContext):
     key_type = parts[1]
     key_value = parts[2]
     
+    # Получаем информацию о пользователе для отображения
+    if key_type == "id":
+        user = await get_user_by_id(int(key_value))
+    else:
+        user = await get_user_by_username(key_value)
+    
+    if not user:
+        await callback.message.edit_text("❌ Пользователь не найден")
+        await state.clear()
+        return
+    
+    # Сохраняем данные для удаления
+    await state.update_data(del_user_type=key_type, del_user_value=key_value)
+    
+    # Показываем подтверждение
+    user_text = format_user(user)
+    await callback.message.edit_text(
+        f"🗑️ *Удалить пользователя?*\n\n"
+        f"{user_text}\n\n"
+        f"⚠️ Это действие нельзя отменить.",
+        parse_mode="Markdown",
+        reply_markup=inline_kb([
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data="conf_del_user")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_del_user")]
+        ])
+    )
+
+
+@router.callback_query(F.data == "conf_del_user", HasRole(ROLE_ADMIN))
+async def role_delete_execute(callback: CallbackQuery, state: FSMContext):
+    """Выполнение удаления пользователя."""
+    await callback.answer()
+    
+    data = await state.get_data()
+    key_type = data.get("del_user_type")
+    key_value = data.get("del_user_value")
+    
+    if not key_type or not key_value:
+        await callback.message.edit_text("❌ Ошибка: данные не найдены")
+        await state.clear()
+        return
+    
     if key_type == "id":
         success = await delete_user(user_id=int(key_value))
     else:
         success = await delete_user(username=key_value)
     
     if success:
-        await callback.message.edit_text(f"✅ Пользователь удалён")
+        await callback.message.edit_text("✅ Пользователь удалён")
     else:
         await callback.message.edit_text("❌ Не удалось удалить")
     
+    await state.clear()
+
+
+@router.callback_query(F.data == "cancel_del_user", HasRole(ROLE_ADMIN))
+async def role_delete_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена удаления пользователя."""
+    await callback.answer("❌ Удаление отменено")
+    await callback.message.edit_text("❌ Удаление отменено")
     await state.clear()

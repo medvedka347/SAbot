@@ -108,7 +108,16 @@ async def event_add_type(message: Message, state: FSMContext):
         return
     await state.update_data(event_type=message.text, _prev_state="input_type")
     await state.set_state(EventStates.input_datetime)
-    await message.answer("Введите дату `2024-12-31 18:00:00`:", parse_mode="Markdown", reply_markup=back_kb)
+    await message.answer(
+        "📅 *Введите дату и время*\n\n"
+        "Поддерживаемые форматы:\n"
+        "• `2024-12-31 18:00:00` — ISO формат\n"
+        "• `31.12.2024 18:00` — точки\n"
+        "• `сегодня 18:00` — сегодня\n"
+        "• `завтра 18:00` — завтра",
+        parse_mode="Markdown",
+        reply_markup=back_kb
+    )
 
 
 @router.message(EventStates.input_datetime, HasRole(ROLE_ADMIN))
@@ -116,15 +125,16 @@ async def event_add_datetime(message: Message, state: FSMContext):
     """Получение даты события."""
     if not message.text:
         return
-    dt = message.text.strip()
-    try:
-        if datetime.fromisoformat(dt) <= datetime.now():
-            await message.answer("❌ Дата должна быть в будущем!")
-            return
-    except ValueError:
-        await message.answer("❌ Формат: `2024-12-31 18:00:00`", parse_mode="Markdown")
+    
+    # Используем гибкий парсинг даты
+    from utils import parse_datetime_flexible
+    dt_iso, error = parse_datetime_flexible(message.text)
+    
+    if error:
+        await message.answer(error, parse_mode="Markdown")
         return
-    await state.update_data(event_datetime=dt, _prev_state="input_datetime")
+    
+    await state.update_data(event_datetime=dt_iso, _prev_state="input_datetime")
     await state.set_state(EventStates.input_link)
     await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
 
@@ -140,7 +150,7 @@ async def event_add_link(message: Message, state: FSMContext):
     elif not (link.startswith('http://') or link.startswith('https://')):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
-    await state.update_data(event_link=link, _prev_state="input_link_evt")
+    await state.update_data(event_link=link, _prev_state="input_link_evt", _prev_chain="input_datetime")
     await state.set_state(EventStates.input_announcement)
     await message.answer("Введите анонс:", reply_markup=back_kb)
 
@@ -274,7 +284,7 @@ async def event_edit_select(message: Message, state: FSMContext):
         return
     events = await get_events()
     if not events:
-        await message.answer("📭 Нет событий", reply_markup=events_menu_kb)
+        await message.answer("📭 *Нет событий*\n\n💡 Скоро будут новые мероприятия!", parse_mode="Markdown", reply_markup=events_menu_kb)
         return
     await state.set_state(EventStates.selecting_item)
     kb_inline = inline_kb([
@@ -379,19 +389,64 @@ async def event_delete_select(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("del_ev:"), HasRole(ROLE_ADMIN))
-async def event_delete_callback(callback: CallbackQuery, state: FSMContext):
-    """Callback для удаления события."""
+async def event_delete_confirm(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение удаления события."""
     await callback.answer()
     try:
         ev_id = int(callback.data.split(":")[1])
     except (ValueError, IndexError):
         await safe_edit_text(callback, "❌ Некорректные данные")
         return
+    
+    events = await get_events()
+    ev = next((e for e in events if e['id'] == ev_id), None)
+    if not ev:
+        await safe_edit_text(callback, "❌ Событие не найдено")
+        return
+    
+    # Подтверждение удаления
+    await callback.message.edit_text(
+        f"🗑️ *Удалить событие?*\n\n"
+        f"📅 {ev['type']}\n"
+        f"🕐 {ev['datetime'][:16]}\n\n"
+        f"⚠️ Это действие нельзя отменить.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"conf_del_ev:{ev_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_del_ev")]
+        ])
+    )
+
+
+@router.callback_query(F.data.startswith("conf_del_ev:"), HasRole(ROLE_ADMIN))
+async def event_delete_execute(callback: CallbackQuery, state: FSMContext):
+    """Выполнение удаления события."""
+    await callback.answer()
+    try:
+        ev_id = int(callback.data.split(":")[1])
+    except (ValueError, IndexError):
+        await safe_edit_text(callback, "❌ Некорректные данные")
+        return
+    
     if await delete_event(ev_id):
         await safe_edit_text(callback, f"✅ Событие {ev_id} удалено")
     else:
         await safe_edit_text(callback, "❌ Ошибка")
-    await state.clear()
+    
+    # Возвращаемся в меню управления событиями
+    await state.set_state(EventStates.menu)
+    await callback.message.answer("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
+
+
+@router.callback_query(F.data == "cancel_del_ev", HasRole(ROLE_ADMIN))
+async def event_delete_cancel(callback: CallbackQuery, state: FSMContext):
+    """Отмена удаления события."""
+    await callback.answer("❌ Удаление отменено")
+    await callback.message.edit_text("❌ Удаление отменено")
+    
+    # Возвращаемся в меню управления событиями
+    await state.set_state(EventStates.menu)
+    await callback.message.answer("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
 
 
 # ==================== Public: View ====================
@@ -403,6 +458,9 @@ async def public_events_show(message: Message):
     if not ok:
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
+    
+    # Показываем typing пока загружаем события
+    await message.chat.do("typing")
     
     events = await get_events(upcoming_only=True)
     if not events:

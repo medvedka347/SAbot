@@ -274,6 +274,17 @@ async def get_user_by_id(user_id: int) -> dict | None:
     return None
 
 
+async def get_user_by_db_id(db_id: int) -> dict | None:
+    """Найти пользователя по внутреннему ID (id из user_roles)."""
+    row = await db.fetchone(
+        "SELECT id, user_id, username, role FROM user_roles WHERE id = ?",
+        (db_id,)
+    )
+    if row:
+        return {"id": row[0], "user_id": row[1], "username": row[2], "role": row[3]}
+    return None
+
+
 async def get_user_by_username(username: str) -> dict | None:
     """Найти пользователя по username. Возвращает внутренний id из user_roles."""
     username = normalize_username(username)
@@ -1019,7 +1030,7 @@ async def get_all_mentors() -> list[dict]:
     rows = await db.fetchall(
         """SELECT id, user_id, username, created_at 
            FROM user_roles 
-           WHERE role = 'mentor' 
+           WHERE role LIKE '%mentor%' 
            ORDER BY created_at DESC"""
     )
     return [

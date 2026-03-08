@@ -400,7 +400,7 @@ async def lion_add_date(message: Message, state: FSMContext):
 
 # ==================== Callback Handlers ====================
 
-@router.callback_query(F.data.startswith("buddy_mentee:"), HasRole(ROLE_MENTOR))
+@router.callback_query(F.data.startswith("buddy_mentee:"), HasRole([ROLE_MENTOR, ROLE_LION]))
 async def buddy_show_mentee(callback: CallbackQuery, state: FSMContext):
     """Показать детали менти."""
     await callback.answer()
@@ -414,6 +414,18 @@ async def buddy_show_mentee(callback: CallbackQuery, state: FSMContext):
     mentee = await get_mentorship_by_id(mentorship_id)
     if not mentee:
         await callback.message.edit_text("❌ Менти не найден")
+        return
+    
+    # Проверяем что менти принадлежит текущему ментору ИЛИ пользователь — Лев
+    from db_utils import get_user_roles
+    current_user = await get_user_by_id(callback.from_user.id)
+    user_roles = await get_user_roles(user_id=callback.from_user.id)
+    
+    is_owner = current_user and mentee['mentor_id'] == current_user['id']
+    is_lion = ROLE_LION in user_roles
+    
+    if not is_owner and not is_lion:
+        await callback.message.edit_text("❌ У вас нет доступа к этому менти")
         return
     
     text = format_mentee(mentee)
@@ -606,14 +618,22 @@ async def lion_show_mentor_details(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❌ Некорректные данные")
         return
     
-    from db_utils import get_mentor_stats
+    from db_utils import get_mentor_stats, get_user_by_db_id
     
-    mentor = await get_user_by_id(callback.from_user.id)
+    # Получаем данные ментора по внутреннему ID (не текущего пользователя!)
+    mentor = await get_user_by_db_id(mentor_id)
     mentees = await get_mentor_mentees(mentor_id)
     stats = await get_mentor_stats(mentor_id)
     
+    # Формируем контактную информацию ментора
+    if mentor:
+        mentor_contact = f"@{mentor['username']}" if mentor['username'] else f"ID:{mentor['user_id']}"
+    else:
+        mentor_contact = "Неизвестно"
+    
     lines = [
         f"📊 *Отчет по ментору*\n",
+        f"👤 Ментор: {mentor_contact}\n",
         f"*Статистика:*",
         f"🟢 Активно: {stats['active']}",
         f"✅ Завершено: {stats['completed']}",
