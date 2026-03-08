@@ -469,16 +469,28 @@ async def add_or_update_user(user_id: int = None, username: str = None, role: st
 
 async def set_users_batch(users: list[dict], role: str):
     """
-    Массовое назначение роли.
+    Массовое назначение роли (добавление к существующим ролям).
     users: список словарей [{'user_id': 123, 'username': '@name'}, ...]
     """
     for user in users:
+        user_id = user.get("user_id")
+        username = user.get("username")
+        
+        # Получаем существующие роли
+        existing_roles = await get_user_roles(user_id=user_id, username=username)
+        
+        # Добавляем новую роль если её ещё нет
+        if role not in existing_roles:
+            existing_roles.append(role)
+        
+        # Сохраняем все роли
+        roles_str = ','.join(existing_roles)
         await add_or_update_user(
-            user_id=user.get("user_id"),
-            username=user.get("username"),
-            role=role
+            user_id=user_id,
+            username=username,
+            role=roles_str
         )
-    logging.info(f"Роли {len(users)} пользователей -> {role}")
+    logging.info(f"Роли {len(users)} пользователей -> {role} (добавлено к существующим)")
 
 
 async def update_user_id_by_username(username: str, user_id: int) -> bool:
