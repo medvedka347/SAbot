@@ -1280,6 +1280,8 @@ async def add_mentorship(mentor_id: int, mentee_full_name: str,
                          assigned_date: str = None,
                          status: str = 'active') -> int:
     """Добавить новое наставничество."""
+    import aiosqlite
+    
     if assigned_date is None:
         from datetime import datetime
         assigned_date = datetime.now().strftime("%d.%m.%y")
@@ -1292,18 +1294,19 @@ async def add_mentorship(mentor_id: int, mentee_full_name: str,
         logging.error(f"add_mentorship: ментор с id={mentor_id} не найден в user_roles")
         raise ValueError(f"Ментор с id={mentor_id} не найден")
     
-    try:
-        cursor = await db.execute(
+    # Используем соединение напрямую для получения lastrowid
+    async with aiosqlite.connect(db.db_path) as conn:
+        await db._init_connection(conn)
+        cursor = await conn.execute(
             """INSERT INTO buddy_mentorships 
                (mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date)
         )
-        logging.info(f"add_mentorship: создано наставничество id={cursor.lastrowid} для ментора {mentor_id}")
-        return cursor.lastrowid
-    except Exception as e:
-        logging.error(f"add_mentorship ошибка: mentor_id={mentor_id}, error={e}")
-        raise
+        await conn.commit()
+        mentorship_id = cursor.lastrowid
+        logging.info(f"add_mentorship: создано наставничество id={mentorship_id} для ментора {mentor_id}")
+        return mentorship_id
 
 
 async def get_mentor_mentees(mentor_id: int) -> list[dict]:
