@@ -21,6 +21,8 @@ class Database:
         await db.execute("PRAGMA synchronous=NORMAL")  # Баланс скорость/надёжность
         await db.execute("PRAGMA cache_size=10000")  # Увеличиваем кэш
         await db.execute("PRAGMA temp_store=MEMORY")
+        # Включаем проверку foreign keys для целостности данных
+        await db.execute("PRAGMA foreign_keys=ON")
     
     async def execute(self, query: str, params: tuple = ()) -> int:
         """Выполнить запрос с блокировкой для записей."""
@@ -1282,13 +1284,26 @@ async def add_mentorship(mentor_id: int, mentee_full_name: str,
         from datetime import datetime
         assigned_date = datetime.now().strftime("%d.%m.%y")
     
-    cursor = await db.execute(
-        """INSERT INTO buddy_mentorships 
-           (mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date)
+    # Проверяем существование ментора
+    mentor_exists = await db.fetchone(
+        "SELECT 1 FROM user_roles WHERE id = ?", (mentor_id,)
     )
-    return cursor.lastrowid
+    if not mentor_exists:
+        logging.error(f"add_mentorship: ментор с id={mentor_id} не найден в user_roles")
+        raise ValueError(f"Ментор с id={mentor_id} не найден")
+    
+    try:
+        cursor = await db.execute(
+            """INSERT INTO buddy_mentorships 
+               (mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (mentor_id, mentee_id, mentee_full_name, mentee_telegram_tag, status, assigned_date)
+        )
+        logging.info(f"add_mentorship: создано наставничество id={cursor.lastrowid} для ментора {mentor_id}")
+        return cursor.lastrowid
+    except Exception as e:
+        logging.error(f"add_mentorship ошибка: mentor_id={mentor_id}, error={e}")
+        raise
 
 
 async def get_mentor_mentees(mentor_id: int) -> list[dict]:
