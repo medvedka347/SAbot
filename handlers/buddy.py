@@ -347,8 +347,15 @@ def parse_date_flexible(date_str: str) -> str | None:
 async def buddy_add_date(message: Message, state: FSMContext):
     """Получение даты и сохранение менти (для ментора или льва, назначающего бадди)."""
     if not message.text:
+        await message.answer(
+            "❌ *Ошибка:* введите дату\n\n"
+            "Примеры: `07.03.26` или `сегодня`",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
         return
     
+    logging.info(f"buddy_add_date: получена дата '{message.text}' от user_id={message.from_user.id}")
     date_str = parse_date_flexible(message.text)
     
     if date_str is None:
@@ -366,6 +373,20 @@ async def buddy_add_date(message: Message, state: FSMContext):
         return
     
     data = await state.get_data()
+    
+    # Проверяем наличие обязательных данных
+    full_name = data.get('full_name')
+    if not full_name:
+        logging.error(f"buddy_add_date: full_name не найден в данных состояния: {data}")
+        await message.answer(
+            "❌ *Ошибка:* данные потеряны\n\n"
+            "Сессия устарела или данные не сохранились.\n"
+            "Пожалуйста, начните добавление менти заново.",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
+        await state.clear()
+        return
     
     # Проверяем, есть ли selected_mentor_id - это значит, что лев назначает бадди другому ментору
     mentor_id = data.get('selected_mentor_id')
@@ -386,9 +407,10 @@ async def buddy_add_date(message: Message, state: FSMContext):
         mentor_id = user['id']
     
     try:
+        logging.info(f"buddy_add_date: сохранение менти. mentor_id={mentor_id}, full_name={full_name}, date={date_str}")
         mentorship_id = await add_mentorship(
             mentor_id=mentor_id,
-            mentee_full_name=data['full_name'],
+            mentee_full_name=full_name,
             mentee_telegram_tag=data.get('telegram_tag'),
             assigned_date=date_str,
             status='active'
@@ -399,7 +421,7 @@ async def buddy_add_date(message: Message, state: FSMContext):
         if is_lion_assigning:
             await message.answer(
                 f"✅ *Менти назначен ментору!*\n\n"
-                f"👤 {data['full_name']}{tag_info}\n"
+                f"👤 {full_name}{tag_info}\n"
                 f"📅 Дата назначения: {date_str}\n"
                 f"📊 Статус: Активно",
                 parse_mode="Markdown",
@@ -408,7 +430,7 @@ async def buddy_add_date(message: Message, state: FSMContext):
         else:
             await message.answer(
                 f"✅ *Менти добавлен!*\n\n"
-                f"👤 {data['full_name']}{tag_info}\n"
+                f"👤 {full_name}{tag_info}\n"
                 f"📅 Дата назначения: {date_str}\n"
                 f"📊 Статус: Активно",
                 parse_mode="Markdown",
