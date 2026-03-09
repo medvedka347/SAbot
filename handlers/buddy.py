@@ -465,12 +465,18 @@ async def buddy_add_date(message: Message, state: FSMContext):
         await state.clear()
         
     except Exception as e:
-        # Неизвестная ошибка
-        logging.error(f"Неизвестная ошибка при добавлении менти: {e}", exc_info=True)
+        # Неизвестная ошибка - выводим детали для диагностики
+        import traceback
+        error_details = str(e)[:200]  # Обрезаем длинные сообщения
+        logging.error(f"Неизвестная ошибка при добавлении менти: {e}")
+        logging.error(traceback.format_exc())
+        
         await message.answer(
-            "❌ *Системная ошибка*\n\n"
-            "Не удалось сохранить данные.\n"
-            "Попробуйте позже или обратитесь к администратору.",
+            f"❌ *Системная ошибка*\n\n"
+            f"Не удалось сохранить данные.\n\n"
+            f"*Детали для администратора:*\n"
+            f"`{error_details}`\n\n"
+            f"Пожалуйста, сообщите администратору.",
             parse_mode="Markdown",
             reply_markup=back_kb
         )
