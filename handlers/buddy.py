@@ -471,13 +471,13 @@ async def buddy_add_date(message: Message, state: FSMContext):
         logging.error(f"Неизвестная ошибка при добавлении менти: {e}")
         logging.error(traceback.format_exc())
         
+        # Экранируем спецсимволы Markdown для безопасного вывода
+        error_safe = error_details.replace('_', '\\_').replace('*', '\\*').replace('`', '\\`')
         await message.answer(
-            f"❌ *Системная ошибка*\n\n"
+            f"❌ Системная ошибка\n\n"
             f"Не удалось сохранить данные.\n\n"
-            f"*Детали для администратора:*\n"
-            f"`{error_details}`\n\n"
+            f"Детали:\n{error_safe}\n\n"
             f"Пожалуйста, сообщите администратору.",
-            parse_mode="Markdown",
             reply_markup=back_kb
         )
         await state.clear()
