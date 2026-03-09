@@ -199,6 +199,27 @@ class Database:
                 VALUES (?, ?, ?, ?)
             """, (role_key, role_name, priority, f"Роль {role_key}"))
     
+    async def _drop_role_column(self, db: aiosqlite.Connection):
+        """Удаление устаревшего поля role из user_roles (SQLite не поддерживает DROP COLUMN)."""
+        await db.execute("DROP TABLE IF EXISTS user_roles_new")
+        await db.execute("""
+            CREATE TABLE user_roles_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id BIGINT UNIQUE,
+                username TEXT UNIQUE,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                CHECK (user_id IS NOT NULL OR username IS NOT NULL)
+            )
+        """)
+        # Переносим данные (без поля role)
+        await db.execute("""
+            INSERT INTO user_roles_new (id, user_id, username, created_at)
+            SELECT id, user_id, username, created_at FROM user_roles
+        """)
+        await db.execute("DROP TABLE user_roles")
+        await db.execute("ALTER TABLE user_roles_new RENAME TO user_roles")
+        logging.info("Поле 'role' удалено из user_roles")
+    
     async def _migrate_roles_v1_to_v2(self, db: aiosqlite.Connection):
         """
         Миграция ролей из строкового формата в нормализованную схему.
@@ -278,59 +299,39 @@ class Database:
                 f"{error_count} ошибок"
             )
             
+            # После успешной миграции данных - удаляем поле role
+            if error_count == 0:
+                logging.warning("Удаление устаревшего поля 'role' из user_roles")
+                await self._drop_role_column(db)
+            
         except Exception as e:
             logging.error(f"Критическая ошибка миграции ролей: {e}")
             raise  # Пробрасываем ошибку, чтобы остановить запуск если миграция не удалась
     
     async def _migrate_user_roles(self, db: aiosqlite.Connection):
         """
-        Создание/обновление таблицы user_roles (v2 - без поля role).
-        Поле role удалено - теперь используется нормализованная схема user_role_assignments.
+        Создание/обновление таблицы user_roles.
+        ВАЖНО: Поле role пока сохраняем для миграции данных (удалится позже в _migrate_roles_v1_to_v2).
         """
         cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_roles'")
         if not await cursor.fetchone():
-            # Таблицы нет - создаем новую схему (v2, без поля role)
+            # Таблицы нет - создаем старую схему v1 (с полем role) для совместимости
+            # Поле role будет удалено после миграции данных
             await db.execute("""
                 CREATE TABLE user_roles (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id BIGINT UNIQUE,
                     username TEXT UNIQUE,
+                    role TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     CHECK (user_id IS NOT NULL OR username IS NOT NULL)
                 )
             """)
-            logging.info("Создана таблица user_roles (v2)")
+            logging.info("Создана таблица user_roles (v1, для последующей миграции)")
             return
         
-        # Проверяем, нужно ли удалить поле role (миграция v1 -> v2 структуры)
-        cursor = await db.execute("PRAGMA table_info(user_roles)")
-        columns = {row[1] for row in await cursor.fetchall()}
-        
-        if 'role' in columns:
-            logging.warning("Миграция: удаление устаревшего поля 'role' из user_roles")
-            # SQLite не поддерживает DROP COLUMN, поэтому пересоздаем таблицу
-            await self._drop_role_column(db)
-    
-    async def _drop_role_column(self, db: aiosqlite.Connection):
-        """Удаление устаревшего поля role из user_roles (SQLite не поддерживает DROP COLUMN)."""
-        await db.execute("DROP TABLE IF EXISTS user_roles_new")
-        await db.execute("""
-            CREATE TABLE user_roles_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id BIGINT UNIQUE,
-                username TEXT UNIQUE,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                CHECK (user_id IS NOT NULL OR username IS NOT NULL)
-            )
-        """)
-        # Переносим данные (без поля role)
-        await db.execute("""
-            INSERT INTO user_roles_new (id, user_id, username, created_at)
-            SELECT id, user_id, username, created_at FROM user_roles
-        """)
-        await db.execute("DROP TABLE user_roles")
-        await db.execute("ALTER TABLE user_roles_new RENAME TO user_roles")
-        logging.info("Поле 'role' удалено из user_roles")
+        # Таблица существует - проверим структуру
+        # НЕ удаляем поле role здесь - это сделает _migrate_roles_v1_to_v2 после миграции данных
     
     async def _migrate_materials(self, db: aiosqlite.Connection):
         """Миграция: добавление поля stage."""
