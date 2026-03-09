@@ -9,6 +9,7 @@
 - Панель Льва (мета-админ): просмотр всех менторов, отчеты, назначение менти
 """
 import logging
+import aiosqlite
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.state import State, StatesGroup
@@ -149,12 +150,13 @@ async def buddy_add_start(message: Message, state: FSMContext):
         return
     
     await state.set_state(BuddyStates.input_full_name)
-    # Инициализируем историю состояний (первый шаг - нет предыдущих состояний для возврата)
     await state.update_data(_prev_state="input_full_name", _state_history=[])
     
     await message.answer(
         "➕ *Добавление нового менти*\n\n"
-        "Введите ФИО менти (или ФИ без отчества):",
+        "*Шаг 1/3: ФИО*\n"
+        "Введите ФИО менти (или ФИ без отчества):\n\n"
+        "💡 Пример: `Иванов Иван Иванович`",
         parse_mode="Markdown",
         reply_markup=back_kb
     )
@@ -175,24 +177,46 @@ async def lion_add_full_name(message: Message, state: FSMContext):
 async def _process_full_name(message: Message, state: FSMContext):
     """Общая логика получения ФИО."""
     if not message.text:
+        await message.answer(
+            "❌ *Ошибка:* ФИО не может быть пустым\n\n"
+            "Введите ФИО менти (от 2 до 100 символов):",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
         return
     
     full_name = message.text.strip()
-    if len(full_name) < 2 or len(full_name) > 100:
-        await message.answer("❌ ФИО должно быть от 2 до 100 символов")
+    if len(full_name) < 2:
+        await message.answer(
+            "❌ *Ошибка:* ФИО слишком короткое\n\n"
+            "Минимум 2 символа. Попробуйте ещё раз:",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
+        return
+    
+    if len(full_name) > 100:
+        await message.answer(
+            "❌ *Ошибка:* ФИО слишком длинное\n\n"
+            "Максимум 100 символов. Попробуйте ещё раз:",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
         return
     
     # Сохраняем историю для навигации назад
     data = await state.get_data()
     history = data.get("_state_history", [])
-    # На первом шаге нет предыдущего состояния для возврата
     
     await state.update_data(full_name=full_name, _prev_state="input_full_name", _state_history=history)
     await state.set_state(BuddyStates.input_telegram_tag)
     
     await message.answer(
+        "📱 *Шаг 2/3: Telegram тег*\n\n"
         "Введите тег в Telegram (@username):\n"
-        "(или отправьте «пропустить» если нет)",
+        "Примеры: `@ivanov` или `@ivan_ivanov`\n\n"
+        "💡 Если тега нет — отправьте «пропустить»",
+        parse_mode="Markdown",
         reply_markup=back_kb
     )
 
@@ -212,13 +236,54 @@ async def lion_add_telegram_tag(message: Message, state: FSMContext):
 async def _process_telegram_tag(message: Message, state: FSMContext):
     """Общая логика получения @username."""
     if not message.text:
+        await message.answer(
+            "❌ *Ошибка:* пустое сообщение\n\n"
+            "Введите тег в Telegram (@username) или «пропустить»:",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
         return
     
     tag = message.text.strip()
-    if tag.lower() in ['пропустить', 'нет', '-']:
+    
+    # Проверка на пропуск
+    if tag.lower() in ['пропустить', 'нет', '-', 'skip']:
         tag = None
-    elif not tag.startswith('@'):
-        tag = '@' + tag
+    else:
+        # Валидация формата username
+        if not tag.startswith('@'):
+            tag = '@' + tag
+        
+        # Проверка на допустимые символы (a-z, 0-9, _)
+        username_part = tag[1:]  # без @
+        if not username_part:
+            await message.answer(
+                "❌ *Ошибка:* пустой тег\n\n"
+                "Введите тег в формате `@username` или «пропустить»:",
+                parse_mode="Markdown",
+                reply_markup=back_kb
+            )
+            return
+        
+        # Telegram username: 5-32 символа, a-z, 0-9, underscore
+        if len(username_part) < 5:
+            await message.answer(
+                "❌ *Ошибка:* тег слишком короткий\n\n"
+                f"`{tag}` — минимум 5 символов после @\n"
+                "Введите корректный тег или «пропустить»:",
+                parse_mode="Markdown",
+                reply_markup=back_kb
+            )
+            return
+        
+        if len(username_part) > 32:
+            await message.answer(
+                "❌ *Ошибка:* тег слишком длинный\n\n"
+                f"Максимум 32 символа. Введите корректный тег или «пропустить»:",
+                parse_mode="Markdown",
+                reply_markup=back_kb
+            )
+            return
     
     # Сохраняем историю для навигации назад
     data = await state.get_data()
@@ -288,11 +353,15 @@ async def buddy_add_date(message: Message, state: FSMContext):
     
     if date_str is None:
         await message.answer(
-            "❌ Неверный формат даты.\n\n"
-            "Используйте:\n"
-            "• 15.03.26 или 15,03,26\n"
-            "• 15.03.2026 или 15,03,2026\n"
-            "• сегодня"
+            "❌ *Неверный формат даты*\n\n"
+            "Используйте один из форматов:\n"
+            "• `07.03.26` — день.месяц.год\n"
+            "• `07.03.2026` — с полным годом\n"
+            "• `07,03,26` — через запятую\n"
+            "• `сегодня` — сегодняшняя дата\n\n"
+            "Попробуйте ещё раз:",
+            parse_mode="Markdown",
+            reply_markup=back_kb
         )
         return
     
@@ -306,7 +375,12 @@ async def buddy_add_date(message: Message, state: FSMContext):
         # Обычный ментор добавляет менти себе
         user = await get_user_by_id(message.from_user.id)
         if not user:
-            await message.answer("❌ Ошибка: не найден профиль ментора")
+            await message.answer(
+                "❌ *Ошибка:* ваш профиль не найден в системе\n\n"
+                "Обратитесь к администратору. Возможно, вам нужно перезайти в бот (/start)",
+                parse_mode="Markdown",
+                reply_markup=back_kb
+            )
             await state.clear()
             return
         mentor_id = user['id']
@@ -320,11 +394,13 @@ async def buddy_add_date(message: Message, state: FSMContext):
             status='active'
         )
         
+        tag_info = f"\n📱 Тег: {data.get('telegram_tag')}" if data.get('telegram_tag') else ""
+        
         if is_lion_assigning:
             await message.answer(
                 f"✅ *Менти назначен ментору!*\n\n"
-                f"👤 {data['full_name']}\n"
-                f"📅 {date_str}\n"
+                f"👤 {data['full_name']}{tag_info}\n"
+                f"📅 Дата назначения: {date_str}\n"
                 f"📊 Статус: Активно",
                 parse_mode="Markdown",
                 reply_markup=back_kb
@@ -332,17 +408,50 @@ async def buddy_add_date(message: Message, state: FSMContext):
         else:
             await message.answer(
                 f"✅ *Менти добавлен!*\n\n"
-                f"👤 {data['full_name']}\n"
-                f"📅 {date_str}\n"
+                f"👤 {data['full_name']}{tag_info}\n"
+                f"📅 Дата назначения: {date_str}\n"
                 f"📊 Статус: Активно",
                 parse_mode="Markdown",
                 reply_markup=back_kb
             )
         await state.clear()
         
+    except ValueError as e:
+        # Ошибка данных (например, ментор не найден)
+        error_msg = str(e)
+        logging.error(f"Ошибка данных при добавлении менти: {error_msg}")
+        await message.answer(
+            f"❌ *Ошибка данных:*\n\n"
+            f"{error_msg}\n\n"
+            f"Обратитесь к администратору.",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
+        await state.clear()
+        
+    except aiosqlite.IntegrityError as e:
+        # Ошибка целостности БД (constraint violation)
+        logging.error(f"Ошибка целостности БД: {e}")
+        await message.answer(
+            "❌ *Ошибка базы данных*\n\n"
+            "Нарушение целостности данных.\n"
+            "Возможно, этот менти уже существует или ID ментора некорректен.\n\n"
+            "Обратитесь к администратору.",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
+        await state.clear()
+        
     except Exception as e:
-        logging.error(f"Ошибка добавления менти: {e}")
-        await message.answer("❌ Ошибка при сохранении. Попробуйте позже.")
+        # Неизвестная ошибка
+        logging.error(f"Неизвестная ошибка при добавлении менти: {e}", exc_info=True)
+        await message.answer(
+            "❌ *Системная ошибка*\n\n"
+            "Не удалось сохранить данные.\n"
+            "Попробуйте позже или обратитесь к администратору.",
+            parse_mode="Markdown",
+            reply_markup=back_kb
+        )
         await state.clear()
 
 
