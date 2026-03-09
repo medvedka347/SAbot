@@ -460,32 +460,31 @@ def parse_users_input(text: str) -> tuple[list[dict], list[str]]:
 # ==================== KEYBOARD SELECTOR ====================
 
 async def get_main_keyboard(user_id: int):
-    """Получить клавиатуру для пользователя с учетом мультиролей."""
+    """Получить клавиатуру для пользователя с учетом мультиролей и приоритетов."""
     from db_utils import get_user_roles
-    from config import ROLE_ADMIN, ROLE_MENTOR, ROLE_LION
+    from config import get_max_priority
     
     roles = await get_user_roles(user_id=user_id)
+    role_keys = [r['role_key'] for r in roles]
+    max_priority = get_max_priority(role_keys)
     
-    # Собираем кнопки из всех ролей
+    # Собираем кнопки на основе приоритета
     buttons = set()
     
     # User базовые кнопки (для всех)
     buttons.update(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"])
     
-    if ROLE_MENTOR in roles:
+    # Кнопки на основе приоритета
+    if max_priority >= 200:  # mentor или выше
         buttons.add("⚙️ Админка")
     
-    if ROLE_ADMIN in roles:
+    if max_priority >= 300:  # admin или выше
         buttons.update([
             "📦 Управление материалами",
             "👥 Управление ролями",
             "📋 Управление событиями",
             "🚫 Управление банами"
         ])
-    
-    if ROLE_LION in roles:
-        # Лев видит свою панель в Buddy
-        pass  # 🤝 Buddy уже добавлено
     
     # Формируем keyboard
     keyboard = []

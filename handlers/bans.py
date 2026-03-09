@@ -10,7 +10,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
-from config import ROLE_ADMIN
+from config import MODULE_ACCESS
 from db_utils import get_active_bans, unban_user, db as _db, HasRole
 from utils import check_rate_limit, inline_kb
 
@@ -19,7 +19,7 @@ router = Router(name="bans")
 
 # ==================== View Bans ====================
 
-@router.message(F.text == "🚫 Управление банами", HasRole(ROLE_ADMIN))
+@router.message(F.text == "🚫 Управление банами", HasRole(min_priority=MODULE_ACCESS["bans"]))
 async def bans_menu(message: Message, state: FSMContext):
     """Меню управления банами — показывает активные баны."""
     # Блокируем вызов через reply на чужое сообщение
@@ -54,7 +54,7 @@ async def bans_menu(message: Message, state: FSMContext):
 
 # ==================== Unban ====================
 
-@router.callback_query(F.data.startswith("unban:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("unban:"), HasRole(min_priority=MODULE_ACCESS["bans"]))
 async def ban_unban_callback(callback: CallbackQuery, state: FSMContext):
     """Callback снятия бана по ID записи бана."""
     await callback.answer()

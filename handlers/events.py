@@ -13,7 +13,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
-from config import ROLE_ADMIN, ANNOUNCEMENT_GROUP_ID, ANNOUNCEMENT_TOPIC_ID
+from config import MODULE_ACCESS, ANNOUNCEMENT_GROUP_ID, ANNOUNCEMENT_TOPIC_ID
 from db_utils import get_events, add_event, update_event, delete_event, HasRole
 from utils import check_rate_limit, kb, inline_kb, back_kb, escape_md, safe_edit_text, get_main_keyboard
 
@@ -53,7 +53,7 @@ def format_event(ev: dict) -> str:
 
 # ==================== Admin: Menu ====================
 
-@router.message(F.text == "📋 Управление событиями", HasRole(ROLE_ADMIN))
+@router.message(F.text == "📋 Управление событиями", HasRole(min_priority=MODULE_ACCESS["events"]))
 async def events_menu(message: Message, state: FSMContext):
     """Главное меню управления событиями."""
     # Блокируем вызов через reply на чужое сообщение
@@ -71,7 +71,7 @@ async def events_menu(message: Message, state: FSMContext):
 
 # ==================== Admin: View ====================
 
-@router.message(F.text == "📖 Просмотреть", EventStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "📖 Просмотреть", EventStates.menu, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def events_show_all(message: Message, state: FSMContext):
     """Показать все события."""
     # Блокируем вызов через reply на чужое сообщение
@@ -88,7 +88,7 @@ async def events_show_all(message: Message, state: FSMContext):
 
 # ==================== Admin: Create ====================
 
-@router.message(F.text == "➕ Добавить", EventStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "➕ Добавить", EventStates.menu, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_add_start(message: Message, state: FSMContext):
     """Начало добавления события."""
     # Блокируем вызов через reply на чужое сообщение
@@ -99,7 +99,7 @@ async def event_add_start(message: Message, state: FSMContext):
     await message.answer("Введите тип (Вебинар, Митап, Квиз):", reply_markup=back_kb)
 
 
-@router.message(EventStates.input_type, HasRole(ROLE_ADMIN))
+@router.message(EventStates.input_type, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_add_type(message: Message, state: FSMContext):
     """Получение типа события."""
     if not message.text:
@@ -127,7 +127,7 @@ async def event_add_type(message: Message, state: FSMContext):
     )
 
 
-@router.message(EventStates.input_datetime, HasRole(ROLE_ADMIN))
+@router.message(EventStates.input_datetime, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_add_datetime(message: Message, state: FSMContext):
     """Получение даты события."""
     if not message.text:
@@ -151,7 +151,7 @@ async def event_add_datetime(message: Message, state: FSMContext):
     await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
 
 
-@router.message(EventStates.input_link, HasRole(ROLE_ADMIN))
+@router.message(EventStates.input_link, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_add_link(message: Message, state: FSMContext):
     """Получение ссылки на событие."""
     if not message.text:
@@ -172,7 +172,7 @@ async def event_add_link(message: Message, state: FSMContext):
     await message.answer("Введите анонс:", reply_markup=back_kb)
 
 
-@router.message(EventStates.input_announcement, HasRole(ROLE_ADMIN))
+@router.message(EventStates.input_announcement, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_add_announcement(message: Message, state: FSMContext):
     """Получение анонса и подготовка к сохранению."""
     if not message.text:
@@ -229,7 +229,7 @@ async def event_add_announcement(message: Message, state: FSMContext):
     )
 
 
-@router.message(EventStates.confirm_announce, HasRole(ROLE_ADMIN))
+@router.message(EventStates.confirm_announce, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_confirm_announce(message: Message, state: FSMContext, bot: Bot):
     """Подтверждение размещения анонса в группе."""
     if not message.text:
@@ -297,7 +297,7 @@ async def event_confirm_announce(message: Message, state: FSMContext, bot: Bot):
 
 # ==================== Admin: Update ====================
 
-@router.message(F.text == "✏️ Редактировать", EventStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "✏️ Редактировать", EventStates.menu, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_edit_select(message: Message, state: FSMContext):
     """Выбор события для редактирования."""
     # Блокируем вызов через reply на чужое сообщение
@@ -318,7 +318,7 @@ async def event_edit_select(message: Message, state: FSMContext):
     await message.answer("Выберите событие:", reply_markup=kb_inline)
 
 
-@router.callback_query(F.data.startswith("edit_ev:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("edit_ev:"), HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
     """Callback для выбора события на редактирование."""
     await callback.answer()
@@ -346,7 +346,7 @@ async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.message(EventStates.editing, HasRole(ROLE_ADMIN))
+@router.message(EventStates.editing, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_edit_process(message: Message, state: FSMContext):
     """Обработка редактирования события."""
     if not message.text:
@@ -390,7 +390,7 @@ async def event_edit_process(message: Message, state: FSMContext):
 
 # ==================== Admin: Delete ====================
 
-@router.message(F.text == "🗑️ Удалить", EventStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "🗑️ Удалить", EventStates.menu, HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_delete_select(message: Message, state: FSMContext):
     """Выбор события для удаления."""
     # Блокируем вызов через reply на чужое сообщение
@@ -411,7 +411,7 @@ async def event_delete_select(message: Message, state: FSMContext):
     await message.answer("Выберите для удаления:", reply_markup=kb_inline)
 
 
-@router.callback_query(F.data.startswith("del_ev:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("del_ev:"), HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_delete_confirm(callback: CallbackQuery, state: FSMContext):
     """Подтверждение удаления события."""
     await callback.answer()
@@ -441,7 +441,7 @@ async def event_delete_confirm(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("conf_del_ev:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("conf_del_ev:"), HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_delete_execute(callback: CallbackQuery, state: FSMContext):
     """Выполнение удаления события."""
     await callback.answer()
@@ -461,7 +461,7 @@ async def event_delete_execute(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
 
 
-@router.callback_query(F.data == "cancel_del_ev", HasRole(ROLE_ADMIN))
+@router.callback_query(F.data == "cancel_del_ev", HasRole(min_priority=MODULE_ACCESS["events"]))
 async def event_delete_cancel(callback: CallbackQuery, state: FSMContext):
     """Отмена удаления события."""
     await callback.answer("❌ Удаление отменено")

@@ -15,9 +15,9 @@ from aiogram.types import Message
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 
-from config import ROLE_ADMIN, ROLE_MENTOR, ROLE_LION
+from config import ROLE_ADMIN, ROLE_MENTOR, ROLE_LION, get_max_priority, get_primary_role
 from db_utils import (
-    get_user_roles, cleanup_expired_bans, get_ban_status, 
+    get_user_roles, get_user_roles_simple, cleanup_expired_bans, get_ban_status, 
     record_failed_attempt, clear_failed_attempts, 
     get_user_by_username, update_user_id_by_username,
     get_user_by_id, get_user_mentor
@@ -64,6 +64,7 @@ async def start_handler(message: Message):
     
     # Проверяем роли (поддержка мультиролей)
     roles = await get_user_roles(user_id=user_id, username=username)
+    role_keys = [r['role_key'] for r in roles]  # Для проверок
     
     if not roles:
         # Записываем неудачную попытку
@@ -95,13 +96,14 @@ async def start_handler(message: Message):
             logging.info(f"Подхвачен user_id {user_id} для @{username} при первой авторизации")
     
     # Формируем строку ролей для отображения
-    role_display = ', '.join(roles) if roles else 'user'
+    role_display = ', '.join(r['role_key'] for r in roles) if roles else 'user'
     welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
     
-    # Выбираем клавиатуру по роли (приоритет: admin > mentor > user)
-    if ROLE_ADMIN in roles:
+    # Выбираем клавиатуру по приоритету роли (admin > mentor > user)
+    max_priority = get_max_priority(role_keys)
+    if max_priority >= 300:  # admin или выше
         main_kb = admin_kb
-    elif ROLE_MENTOR in roles:
+    elif max_priority >= 200:  # mentor
         main_kb = mentor_kb
     else:
         main_kb = user_kb
@@ -123,6 +125,7 @@ async def help_handler(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username
     roles = await get_user_roles(user_id=user_id, username=username)
+    role_keys = [r['role_key'] for r in roles]
     
     common = (
         "📚 *Материалы* — учебные материалы по разделам\n"
@@ -132,7 +135,7 @@ async def help_handler(message: Message):
         "🔍 `/search <запрос>` — поиск по материалам"
     )
     
-    if ROLE_ADMIN in roles:
+    if ROLE_ADMIN in role_keys:
         extra = (
             "\n\n👑 *Администратор:*\n"
             "📦 Управление материалами (CRUD)\n"
@@ -140,7 +143,7 @@ async def help_handler(message: Message):
             "📋 Управление событиями\n"
             "🚫 Управление банами — просмотр и снятие банов"
         )
-    elif ROLE_MENTOR in roles:
+    elif ROLE_MENTOR in role_keys:
         extra = "\n\n🎓 *Ментор:*\n⚙️ Панель ментора"
     elif roles:
         extra = ""
@@ -168,12 +171,14 @@ async def admin_handler(message: Message, state: FSMContext):
     
     await state.clear()
     roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
+    role_keys = [r['role_key'] for r in roles]
+    max_priority = get_max_priority(role_keys)
     
     # Определяем клавиатуру и текст по приоритету ролей
-    if ROLE_ADMIN in roles:
+    if max_priority >= 300:  # admin или выше
         panel_kb = admin_kb if message.chat.type == "private" else None
         await message.answer("🔧 Панель администратора", reply_markup=panel_kb)
-    elif ROLE_MENTOR in roles:
+    elif max_priority >= 200:  # mentor
         panel_kb = mentor_kb if message.chat.type == "private" else None
         await message.answer("🎓 Панель ментора", reply_markup=panel_kb)
     else:
@@ -235,7 +240,7 @@ async def back_handler(message: Message, state: FSMContext):
     if prev_state_key == "menu":
         await state.clear()
         roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
-        role_display = ', '.join(roles) if roles else 'user'
+        role_display = ', '.join(r['role_key'] for r in roles) if roles else 'user'
         welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
         kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
         await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
@@ -320,7 +325,7 @@ async def back_handler(message: Message, state: FSMContext):
     # Нет истории или ошибка - в главное меню
     await state.clear()
     roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
-    role_display = ', '.join(roles) if roles else 'user'
+    role_display = ', '.join(r['role_key'] for r in roles) if roles else 'user'
     welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
     kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
     await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
@@ -340,10 +345,12 @@ async def buddy_handler(message: Message, state: FSMContext):
     
     # Получаем роли пользователя (поддержка мультиролей)
     roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
+    role_keys = [r['role_key'] for r in roles]
+    max_priority = get_max_priority(role_keys)
     
     # Приоритет ролей для Buddy: LION > MENTOR/ADMIN > USER
-    is_lion = ROLE_LION in roles
-    is_mentor = ROLE_MENTOR in roles or ROLE_ADMIN in roles  # Админ тоже может быть ментором
+    is_lion = max_priority >= 400  # lion приоритет
+    is_mentor = max_priority >= 200  # mentor или выше
     
     if is_lion:
         # Для Льва (мета-админа) - показываем панель управления всей системой

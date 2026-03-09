@@ -14,7 +14,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
-from config import ROLE_MENTOR, ROLE_ADMIN, ROLE_LION
+from config import MODULE_ACCESS, ROLE_MENTOR, ROLE_ADMIN, ROLE_LION
 from db_utils import (
     HasRole, get_user_by_id, get_user_by_username, get_all_users,
     add_mentorship, get_mentor_mentees, update_mentorship_status,
@@ -89,7 +89,7 @@ def format_mentee(mentee: dict, index: int = None) -> str:
 
 # ==================== Menu: List Mentees ====================
 
-@router.message(F.text == "📋 Список менти", HasRole(ROLE_MENTOR))
+@router.message(F.text == "📋 Список менти", HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_list_mentees(message: Message, state: FSMContext):
     """Показать список менти ментора."""
     ok, wait = check_rate_limit(message.from_user.id)
@@ -140,7 +140,7 @@ async def buddy_list_mentees(message: Message, state: FSMContext):
 
 # ==================== Add Mentee ====================
 
-@router.message(F.text == "➕ Добавить менти", HasRole(ROLE_MENTOR))
+@router.message(F.text == "➕ Добавить менти", HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_add_start(message: Message, state: FSMContext):
     """Начало добавления менти."""
     ok, wait = check_rate_limit(message.from_user.id)
@@ -160,13 +160,13 @@ async def buddy_add_start(message: Message, state: FSMContext):
     )
 
 
-@router.message(BuddyStates.input_full_name, HasRole(ROLE_MENTOR))
+@router.message(BuddyStates.input_full_name, HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_add_full_name(message: Message, state: FSMContext):
     """Получение ФИО менти (для ментора)."""
     await _process_full_name(message, state)
 
 
-@router.message(BuddyStates.input_full_name, HasRole(ROLE_LION))
+@router.message(BuddyStates.input_full_name, HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_add_full_name(message: Message, state: FSMContext):
     """Получение ФИО менти (для льва)."""
     await _process_full_name(message, state)
@@ -197,13 +197,13 @@ async def _process_full_name(message: Message, state: FSMContext):
     )
 
 
-@router.message(BuddyStates.input_telegram_tag, HasRole(ROLE_MENTOR))
+@router.message(BuddyStates.input_telegram_tag, HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_add_telegram_tag(message: Message, state: FSMContext):
     """Получение @username менти (для ментора)."""
     await _process_telegram_tag(message, state)
 
 
-@router.message(BuddyStates.input_telegram_tag, HasRole(ROLE_LION))
+@router.message(BuddyStates.input_telegram_tag, HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_add_telegram_tag(message: Message, state: FSMContext):
     """Получение @username менти (для льва)."""
     await _process_telegram_tag(message, state)
@@ -278,7 +278,7 @@ def parse_date_flexible(date_str: str) -> str | None:
         return None
 
 
-@router.message(BuddyStates.input_assigned_date, HasRole(ROLE_MENTOR))
+@router.message(BuddyStates.input_assigned_date, HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_add_date(message: Message, state: FSMContext):
     """Получение даты и сохранение менти (для ментора или льва, назначающего бадди)."""
     if not message.text:
@@ -346,7 +346,7 @@ async def buddy_add_date(message: Message, state: FSMContext):
         await state.clear()
 
 
-@router.message(BuddyStates.input_assigned_date, HasRole(ROLE_LION))
+@router.message(BuddyStates.input_assigned_date, HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_add_date(message: Message, state: FSMContext):
     """Получение даты и сохранение менти (для Льва)."""
     if not message.text:
@@ -412,7 +412,7 @@ async def lion_add_date(message: Message, state: FSMContext):
 
 # ==================== Callback Handlers ====================
 
-@router.callback_query(F.data.startswith("buddy_mentee:"), HasRole([ROLE_MENTOR, ROLE_LION]))
+@router.callback_query(F.data.startswith("buddy_mentee:"), HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_show_mentee(callback: CallbackQuery, state: FSMContext):
     """Показать детали менти."""
     await callback.answer()
@@ -429,12 +429,13 @@ async def buddy_show_mentee(callback: CallbackQuery, state: FSMContext):
         return
     
     # Проверяем что менти принадлежит текущему ментору ИЛИ пользователь — Лев
-    from db_utils import get_user_roles
+    from db_utils import get_user_roles, get_user_max_priority
+    from config import MODULE_ACCESS
     current_user = await get_user_by_id(callback.from_user.id)
-    user_roles = await get_user_roles(user_id=callback.from_user.id, username=callback.from_user.username)
+    user_max_priority = await get_user_max_priority(user_id=callback.from_user.id, username=callback.from_user.username)
     
     is_owner = current_user and mentee['mentor_id'] == current_user['id']
-    is_lion = ROLE_LION in user_roles
+    is_lion = user_max_priority >= MODULE_ACCESS["buddy_lion"]
     
     if not is_owner and not is_lion:
         await callback.message.edit_text("❌ У вас нет доступа к этому менти")
@@ -450,7 +451,7 @@ async def buddy_show_mentee(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("buddy_chstatus:"), HasRole(ROLE_MENTOR))
+@router.callback_query(F.data.startswith("buddy_chstatus:"), HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_change_status_start(callback: CallbackQuery, state: FSMContext):
     """Начать изменение статуса."""
     await callback.answer()
@@ -468,7 +469,7 @@ async def buddy_change_status_start(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("buddy_status:"), HasRole(ROLE_MENTOR))
+@router.callback_query(F.data.startswith("buddy_status:"), HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_set_status(callback: CallbackQuery, state: FSMContext):
     """Установить статус менти."""
     await callback.answer()
@@ -491,7 +492,7 @@ async def buddy_set_status(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❌ Ошибка обновления статуса")
 
 
-@router.callback_query(F.data.startswith("buddy_del:"), HasRole(ROLE_MENTOR))
+@router.callback_query(F.data.startswith("buddy_del:"), HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_delete_mentee(callback: CallbackQuery, state: FSMContext):
     """Удалить менти."""
     await callback.answer()
@@ -520,7 +521,7 @@ async def buddy_delete_mentee(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("buddy_conf_del:"), HasRole(ROLE_MENTOR))
+@router.callback_query(F.data.startswith("buddy_conf_del:"), HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_confirm_delete(callback: CallbackQuery, state: FSMContext):
     """Подтверждение удаления менти."""
     await callback.answer()
@@ -537,7 +538,7 @@ async def buddy_confirm_delete(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text("❌ Ошибка удаления")
 
 
-@router.callback_query(F.data == "buddy_back_to_list", HasRole(ROLE_MENTOR))
+@router.callback_query(F.data == "buddy_back_to_list", HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
 async def buddy_back_to_list(callback: CallbackQuery, state: FSMContext):
     """Вернуться к списку менти."""
     await callback.answer()
@@ -552,7 +553,7 @@ async def buddy_back_to_list(callback: CallbackQuery, state: FSMContext):
 
 # ==================== LION PANEL (META ADMIN) ====================
 
-@router.message(F.text == "🦁 Панель Льва", HasRole(ROLE_LION))
+@router.message(F.text == "🦁 Панель Льва", HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_panel(message: Message, state: FSMContext):
     """Панель Льва - управление Buddy системой."""
     ok, wait = check_rate_limit(message.from_user.id)
@@ -581,7 +582,7 @@ async def lion_panel(message: Message, state: FSMContext):
     )
 
 
-@router.message(F.text == "📊 Список менторов", HasRole(ROLE_LION))
+@router.message(F.text == "📊 Список менторов", HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_list_mentors(message: Message, state: FSMContext):
     """Показать список всех менторов (для Льва)."""
     ok, wait = check_rate_limit(message.from_user.id)
@@ -619,7 +620,7 @@ async def lion_list_mentors(message: Message, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("lion_mentor:"), HasRole(ROLE_LION))
+@router.callback_query(F.data.startswith("lion_mentor:"), HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_show_mentor_details(callback: CallbackQuery, state: FSMContext):
     """Показать детали ментора (отчет)."""
     await callback.answer()
@@ -666,7 +667,7 @@ async def lion_show_mentor_details(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "lion_back_to_mentors", HasRole(ROLE_LION))
+@router.callback_query(F.data == "lion_back_to_mentors", HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_back_to_mentors(callback: CallbackQuery, state: FSMContext):
     """Вернуться к списку менторов."""
     await callback.answer()
@@ -678,7 +679,7 @@ async def lion_back_to_mentors(callback: CallbackQuery, state: FSMContext):
     await lion_list_mentors(message, state)
 
 
-@router.message(F.text == "📋 Все менти", HasRole(ROLE_LION))
+@router.message(F.text == "📋 Все менти", HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_all_mentees(message: Message, state: FSMContext):
     """Показать всех менти во всех системе."""
     ok, wait = check_rate_limit(message.from_user.id)
@@ -717,7 +718,7 @@ async def lion_all_mentees(message: Message, state: FSMContext):
     )
 
 
-@router.message(F.text == "➕ Назначить бадди", HasRole(ROLE_LION))
+@router.message(F.text == "➕ Назначить бадди", HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_assign_start(message: Message, state: FSMContext):
     """Начать назначение бадди ментору."""
     ok, wait = check_rate_limit(message.from_user.id)
@@ -753,7 +754,7 @@ async def lion_assign_start(message: Message, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("lion_assign:"), HasRole(ROLE_LION))
+@router.callback_query(F.data.startswith("lion_assign:"), HasRole(min_priority=MODULE_ACCESS["buddy_lion"]))
 async def lion_select_mentor_for_assign(callback: CallbackQuery, state: FSMContext):
     """Выбрали ментора для назначения бадди."""
     await callback.answer()

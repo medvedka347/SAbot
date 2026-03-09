@@ -13,7 +13,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from config import STAGES, ROLE_ADMIN
+from config import STAGES, MODULE_ACCESS
 from db_utils import (
     get_materials, get_material, add_material, update_material, delete_material,
     get_materials_stats, HasRole
@@ -62,7 +62,7 @@ def format_material(mat: dict) -> str:
 
 # ==================== Admin: Menu ====================
 
-@router.message(F.text == "📦 Управление материалами", HasRole(ROLE_ADMIN))
+@router.message(F.text == "📦 Управление материалами", HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def materials_menu(message: Message, state: FSMContext):
     """Главное меню управления материалами."""
     # Блокируем вызов через reply на чужое сообщение
@@ -79,7 +79,7 @@ async def materials_menu(message: Message, state: FSMContext):
 
 # ==================== Admin: View ====================
 
-@router.message(F.text == "📖 Просмотреть", MaterialStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "📖 Просмотреть", MaterialStates.menu, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_select_stage(message: Message, state: FSMContext):
     """Выбор stage для просмотра материалов."""
     # Блокируем вызов через reply на чужое сообщение
@@ -91,7 +91,7 @@ async def material_select_stage(message: Message, state: FSMContext):
     await message.answer("Выберите раздел:", reply_markup=stage_kb)
 
 
-@router.message(MaterialStates.selecting_stage, HasRole(ROLE_ADMIN))
+@router.message(MaterialStates.selecting_stage, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def handle_stage_selection_admin(message: Message, state: FSMContext):
     """Обработка выбора stage в админке."""
     stage = get_stage_key(message.text)
@@ -158,7 +158,7 @@ async def handle_stage_selection_admin(message: Message, state: FSMContext):
 
 # ==================== Admin: Create ====================
 
-@router.message(F.text == "➕ Добавить", MaterialStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "➕ Добавить", MaterialStates.menu, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_add_start(message: Message, state: FSMContext):
     """Начало добавления материала."""
     # Блокируем вызов через reply на чужое сообщение
@@ -170,7 +170,7 @@ async def material_add_start(message: Message, state: FSMContext):
     await message.answer("➕ Выберите раздел для добавления:", reply_markup=stage_kb)
 
 
-@router.message(MaterialStates.input_title, HasRole(ROLE_ADMIN))
+@router.message(MaterialStates.input_title, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_add_title(message: Message, state: FSMContext):
     """Получение названия материала."""
     if not message.text:
@@ -189,7 +189,7 @@ async def material_add_title(message: Message, state: FSMContext):
     await message.answer("Введите ссылку (https://...):", reply_markup=back_kb)
 
 
-@router.message(MaterialStates.input_link, HasRole(ROLE_ADMIN))
+@router.message(MaterialStates.input_link, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_add_link(message: Message, state: FSMContext):
     """Получение ссылки на материал."""
     if not message.text:
@@ -212,7 +212,7 @@ async def material_add_link(message: Message, state: FSMContext):
     await message.answer("Введите описание (или 'пропустить'):", reply_markup=back_kb)
 
 
-@router.message(MaterialStates.input_desc, HasRole(ROLE_ADMIN))
+@router.message(MaterialStates.input_desc, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_add_desc(message: Message, state: FSMContext):
     """Получение описания и сохранение материала."""
     if not message.text:
@@ -242,7 +242,7 @@ async def material_add_desc(message: Message, state: FSMContext):
 
 # ==================== Admin: Update ====================
 
-@router.message(F.text == "✏️ Редактировать", MaterialStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "✏️ Редактировать", MaterialStates.menu, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_edit_select_stage(message: Message, state: FSMContext):
     """Выбор stage для редактирования."""
     # Блокируем вызов через reply на чужое сообщение
@@ -254,7 +254,7 @@ async def material_edit_select_stage(message: Message, state: FSMContext):
     await message.answer("✏️ Выберите раздел:", reply_markup=stage_kb)
 
 
-@router.callback_query(F.data.startswith("edit_mat:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("edit_mat:"), HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
     """Callback для выбора материала на редактирование."""
     # Rate limit check
@@ -297,7 +297,7 @@ async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.message(MaterialStates.editing, HasRole(ROLE_ADMIN))
+@router.message(MaterialStates.editing, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_edit_process(message: Message, state: FSMContext):
     """Обработка редактирования материала."""
     if not message.text:
@@ -335,7 +335,7 @@ async def material_edit_process(message: Message, state: FSMContext):
 
 # ==================== Admin: Delete ====================
 
-@router.message(F.text == "🗑️ Удалить", MaterialStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "🗑️ Удалить", MaterialStates.menu, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_delete_select_stage(message: Message, state: FSMContext):
     """Выбор stage для удаления."""
     # Блокируем вызов через reply на чужое сообщение
@@ -347,7 +347,7 @@ async def material_delete_select_stage(message: Message, state: FSMContext):
     await message.answer("🗑️ Выберите раздел:", reply_markup=stage_kb)
 
 
-@router.callback_query(F.data.startswith("del_mat:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("del_mat:"), HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_delete_confirm(callback: CallbackQuery, state: FSMContext):
     """Подтверждение удаления материала."""
     # Rate limit check
@@ -382,7 +382,7 @@ async def material_delete_confirm(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("conf_del_mat:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("conf_del_mat:"), HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_delete_execute(callback: CallbackQuery, state: FSMContext):
     """Выполнение удаления материала."""
     await callback.answer()
@@ -410,7 +410,7 @@ async def material_delete_execute(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("📦 *Управление материалами*", parse_mode="Markdown", reply_markup=materials_menu_kb)
 
 
-@router.callback_query(F.data == "cancel_del_mat", HasRole(ROLE_ADMIN))
+@router.callback_query(F.data == "cancel_del_mat", HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_delete_cancel(callback: CallbackQuery, state: FSMContext):
     """Отмена удаления материала."""
     await callback.answer("❌ Удаление отменено")
@@ -423,7 +423,7 @@ async def material_delete_cancel(callback: CallbackQuery, state: FSMContext):
 
 # ==================== Admin: Stats ====================
 
-@router.message(F.text == "📊 Статистика", MaterialStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "📊 Статистика", MaterialStates.menu, HasRole(min_priority=MODULE_ACCESS["materials"]))
 async def material_stats(message: Message, state: FSMContext):
     """Показ статистики по материалам."""
     # Блокируем вызов через reply на чужое сообщение

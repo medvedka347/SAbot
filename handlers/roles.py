@@ -12,7 +12,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKe
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
-from config import ROLE_ADMIN, ROLES
+from config import MODULE_ACCESS, ROLES
 from db_utils import get_all_users, set_users_batch, delete_user, HasRole, get_user_by_id, get_user_by_username
 from utils import (
     check_rate_limit, kb, inline_kb, back_kb,
@@ -72,7 +72,7 @@ def build_users_pagination_keyboard(page: int, total_pages: int) -> InlineKeyboa
 
 # ==================== Menu ====================
 
-@router.message(F.text == "👥 Управление ролями", HasRole(ROLE_ADMIN))
+@router.message(F.text == "👥 Управление ролями", HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def roles_menu(message: Message, state: FSMContext):
     """Главное меню управления ролями."""
     # Блокируем вызов через reply на чужое сообщение
@@ -144,7 +144,7 @@ async def _show_users_page(
         await message_or_callback.answer(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
-@router.message(F.text == "📋 Список пользователей", RoleStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "📋 Список пользователей", RoleStates.menu, HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def roles_show(message: Message, state: FSMContext):
     """Показать список всех пользователей (с пагинацией)."""
     # Блокируем вызов через reply на чужое сообщение
@@ -179,7 +179,7 @@ async def roles_show(message: Message, state: FSMContext):
     await roles_menu(message, state)
 
 
-@router.callback_query(F.data.startswith("users_page:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("users_page:"), HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def users_page_callback(callback: CallbackQuery):
     """Callback для переключения страниц списка пользователей."""
     page = int(callback.data.split(":")[1])
@@ -204,7 +204,7 @@ async def users_page_callback(callback: CallbackQuery):
 
 # ==================== Assign Role ====================
 
-@router.message(F.text == "➕ Назначить роль", RoleStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "➕ Назначить роль", RoleStates.menu, HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def role_add_start(message: Message, state: FSMContext):
     """Начало добавления/изменения роли."""
     # Блокируем вызов через reply на чужое сообщение
@@ -226,7 +226,7 @@ async def role_add_start(message: Message, state: FSMContext):
     await message.answer(text, parse_mode="Markdown", reply_markup=back_kb)
 
 
-@router.message(RoleStates.input_users, HasRole(ROLE_ADMIN))
+@router.message(RoleStates.input_users, HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def role_receive_users(message: Message, state: FSMContext):
     """Обработка ввода пользователей."""
     if not message.text:
@@ -267,7 +267,7 @@ async def role_receive_users(message: Message, state: FSMContext):
     )
 
 
-@router.callback_query(F.data.startswith("set_role:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("set_role:"), HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def role_set_confirm(callback: CallbackQuery, state: FSMContext):
     """Подтверждение назначения роли."""
     await callback.answer()
@@ -312,7 +312,7 @@ async def role_set_confirm(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "conf_set_role", HasRole(ROLE_ADMIN))
+@router.callback_query(F.data == "conf_set_role", HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def role_set_execute(callback: CallbackQuery, state: FSMContext):
     """Выполнение назначения роли."""
     await callback.answer()
@@ -334,7 +334,7 @@ async def role_set_execute(callback: CallbackQuery, state: FSMContext):
     await state.clear()
 
 
-@router.callback_query(F.data == "cancel_set_role", HasRole(ROLE_ADMIN))
+@router.callback_query(F.data == "cancel_set_role", HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def role_set_cancel(callback: CallbackQuery, state: FSMContext):
     """Отмена назначения роли."""
     await callback.answer("❌ Назначение отменено")
@@ -344,7 +344,7 @@ async def role_set_cancel(callback: CallbackQuery, state: FSMContext):
 
 # ==================== Delete User ====================
 
-@router.message(F.text == "🗑️ Удалить пользователя", RoleStates.menu, HasRole(ROLE_ADMIN))
+@router.message(F.text == "🗑️ Удалить пользователя", RoleStates.menu, HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def role_delete_start(message: Message, state: FSMContext):
     """Начало удаления пользователя."""
     # Блокируем вызов через reply на чужое сообщение
@@ -380,7 +380,7 @@ async def role_delete_start(message: Message, state: FSMContext):
     await message.answer("🗑️ Выберите пользователя для удаления:", reply_markup=inline_kb(keyboard))
 
 
-@router.callback_query(F.data.startswith("del_user:"), HasRole(ROLE_ADMIN))
+@router.callback_query(F.data.startswith("del_user:"), HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def role_delete_confirm(callback: CallbackQuery, state: FSMContext):
     """Подтверждение удаления пользователя."""
     await callback.answer()
@@ -425,7 +425,7 @@ async def role_delete_confirm(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "conf_del_user", HasRole(ROLE_ADMIN))
+@router.callback_query(F.data == "conf_del_user", HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def role_delete_execute(callback: CallbackQuery, state: FSMContext):
     """Выполнение удаления пользователя."""
     await callback.answer()
@@ -452,7 +452,7 @@ async def role_delete_execute(callback: CallbackQuery, state: FSMContext):
     await state.clear()
 
 
-@router.callback_query(F.data == "cancel_del_user", HasRole(ROLE_ADMIN))
+@router.callback_query(F.data == "cancel_del_user", HasRole(min_priority=MODULE_ACCESS["roles"]))
 async def role_delete_cancel(callback: CallbackQuery, state: FSMContext):
     """Отмена удаления пользователя."""
     await callback.answer("❌ Удаление отменено")
