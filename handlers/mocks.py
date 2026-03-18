@@ -63,16 +63,28 @@ async def booking_handler(message: Message):
     )
 
 
-@router.message(F.text.regexp(rf"^👤 ({'|'.join(MOCK_MENTORS.keys())})$"))
+@router.message(F.text)
 async def mock_select_handler(message: Message):
-    """Обработчик выбора ментора для мока."""
+    """Обработчик выбора ментора для мока.
+    
+    Проверяет что текст заканчивается на имя ментора из MOCK_MENTORS.
+    Работает независимо от эмодзи в начале строки.
+    """
     ok, wait = check_rate_limit(message.from_user.id)
     if not ok:
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     
-    # Извлекаем имя ментора (убираем эмодзи)
-    mentor = message.text.replace("👤 ", "")
+    # Ищем имя ментора в конце строки (после эмодзи/префикса)
+    text = message.text
+    mentor = None
+    for name in MOCK_MENTORS.keys():
+        if text.endswith(name):
+            mentor = name
+            break
+    
+    if not mentor:
+        return  # Не наше сообщение — пропускаем
     
     if mentor not in MOCK_MENTORS:
         await message.answer("❌ Ментор не найден")

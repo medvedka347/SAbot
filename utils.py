@@ -9,7 +9,8 @@
 """
 import logging
 import re
-from datetime import datetime
+from time import time
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from aiogram.types import ErrorEvent
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton, \
@@ -43,7 +44,6 @@ def check_rate_limit(user_id: int) -> tuple[bool, int]:
     """Очень мягкий rate limit для комфортной работы.
     Returns: (можно_обрабатывать, секунд_до_следующего_запроса)
     """
-    from time import time
     now = time()
     
     if user_id not in _rate_limits:
@@ -179,7 +179,6 @@ def parse_datetime_flexible(text: str) -> tuple[str | None, str | None]:
                     dt = datetime(now.year, now.month, now.day, int(hour), int(minute))
                 elif ptype == 'tomorrow':
                     hour, minute = match.groups()[1:]
-                    from datetime import timedelta
                     tomorrow = datetime.now() + timedelta(days=1)
                     dt = datetime(tomorrow.year, tomorrow.month, tomorrow.day, int(hour), int(minute))
                 
@@ -197,19 +196,12 @@ def parse_datetime_flexible(text: str) -> tuple[str | None, str | None]:
 
 # ==================== RATE LIMITING FOR GROUPS ====================
 
-# Хранилище для групп: {chat_id: {"command": {"timestamps": [], "muted_until": 0}}}
-_group_rate_limits = {}
-GROUP_RATE_LIMIT_WINDOW = 30.0      # 30 секунд
-GROUP_RATE_LIMIT_MAX = 3            # Макс 3 одинаковые команды
-GROUP_RATE_LIMIT_MUTE = 60          # Мут на 60 секунд
-
 
 def check_group_rate_limit(chat_id: int, command: str) -> tuple[bool, bool]:
     """
     Rate limit для команд в группах (общий на чат, по типу команды).
     Returns: (можно_обрабатывать, в_муте)
     """
-    from time import time
     now = time()
     
     if chat_id not in _group_rate_limits:
@@ -289,15 +281,18 @@ def inline_kb(buttons: list[list]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-# Главные меню
+# Главные меню (для совместимости, рекомендуется использовать get_main_keyboard)
 user_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"])
-mentor_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "⚙️ Админка", "🤝 Buddy"])
-admin_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок",
-               "📦 Управление материалами", "👥 Управление ролями", "📋 Управление событиями",
-               "🚫 Управление банами", "🤝 Buddy"])
+mentor_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy",
+                "📋 Управление событиями"])
+admin_kb = kb(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy",
+               "───── ⚙️ Управление ─────",
+               "📦 Управление материалами", "👥 Управление ролями", 
+               "📋 Управление событиями", "🚫 Управление банами"])
 
-back_kb = kb([], "🔙 Назад")
-stage_kb = kb(list(STAGES.values()), "🔙 Назад")
+back_kb = kb(["🏠 Главное меню"], "🔙 Назад")
+main_menu_kb = kb(["🏠 Главное меню"])
+stage_kb = kb(list(STAGES.values()) + ["🏠 Главное меню"], "🔙 Назад")
 
 
 # ==================== HELPERS ====================
@@ -403,7 +398,6 @@ def parse_users_input(text: str) -> tuple[list[dict], list[str]]:
     Returns: (список_пользователей, список_ошибок)
     """
     from db_utils import normalize_username, validate_user_id
-    
     users = []
     errors = []
     
@@ -460,48 +454,55 @@ def parse_users_input(text: str) -> tuple[list[dict], list[str]]:
 # ==================== KEYBOARD SELECTOR ====================
 
 async def get_main_keyboard(user_id: int):
-    """Получить клавиатуру для пользователя с учетом мультиролей и приоритетов."""
+    """Получить клавиатуру для пользователя с учетом мультиролей и приоритетов.
+    
+    Структура:
+    - Пользовательские функции (2x2 сетка)
+    - Разделитель (если есть управленческие)
+    - Управленческие функции (отдельные строки)
+    """
     from db_utils import get_user_roles
     from config import get_max_priority
-    
+
     roles = await get_user_roles(user_id=user_id)
     role_keys = [r['role_key'] for r in roles]
     max_priority = get_max_priority(role_keys)
     
-    # Собираем кнопки на основе приоритета
-    buttons = set()
-    
-    # User базовые кнопки (для всех)
-    buttons.update(["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"])
-    
-    # Кнопки на основе приоритета
-    if max_priority >= 200:  # mentor или выше
-        buttons.add("⚙️ Админка")
-    
-    if max_priority >= 300:  # admin или выше
-        buttons.update([
-            "📦 Управление материалами",
-            "👥 Управление ролями",
-            "📋 Управление событиями",
-            "🚫 Управление банами"
-        ])
-    
-    # Формируем keyboard
     keyboard = []
+    
+    # === ПОЛЬЗОВАТЕЛЬСКИЕ ФУНКЦИИ (сетка 2x2) ===
+    user_buttons = ["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"]
     row = []
-    for btn in ["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"]:
-        if btn in buttons:
-            row.append(btn)
+    for btn in user_buttons:
+        row.append(btn)
         if len(row) == 2:
             keyboard.append([KeyboardButton(text=b) for b in row])
             row = []
     if row:
         keyboard.append([KeyboardButton(text=b) for b in row])
     
-    # Добавляем админские кнопки
-    admin_buttons = [b for b in buttons if b not in ["📚 Материалы", "📅 События комьюнити", "⏱️ Записаться на мок", "🤝 Buddy"]]
-    for btn in admin_buttons:
-        keyboard.append([KeyboardButton(text=btn)])
+    # === УПРАВЛЕНЧЕСКИЕ ФУНКЦИИ ===
+    admin_buttons = []
+    
+    # Менторские функции
+    if max_priority >= 200:
+        if "📋 Управление событиями" not in [b.text for row in keyboard for b in row]:
+            admin_buttons.append("📋 Управление событиями")
+    
+    # Админские функции
+    if max_priority >= 300:
+        admin_buttons.extend([
+            "📦 Управление материалами",
+            "👥 Управление ролями",
+            "🚫 Управление банами"
+        ])
+    
+    # Добавляем разделитель и управленческие кнопки (каждая на отдельной строке)
+    if admin_buttons:
+        # Разделитель (визуально отделяем управленческие функции)
+        keyboard.append([KeyboardButton(text="───── ⚙️ Управление ─────")])
+        for btn in admin_buttons:
+            keyboard.append([KeyboardButton(text=btn)])
     
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 

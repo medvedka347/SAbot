@@ -9,7 +9,10 @@
 - Панель Льва (мета-админ): просмотр всех менторов, отчеты, назначение менти
 """
 import logging
+import re
+import traceback
 import aiosqlite
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.state import State, StatesGroup
@@ -21,7 +24,7 @@ from db_utils import (
     add_mentorship, get_mentor_mentees, update_mentorship_status,
     delete_mentorship, get_mentorship_by_id
 )
-from utils import check_rate_limit, inline_kb, back_kb, get_main_keyboard
+from utils import check_rate_limit, inline_kb, back_kb, get_main_keyboard, parse_date_flexible
 
 router = Router(name="buddy")
 
@@ -99,7 +102,7 @@ async def buddy_list_mentees(message: Message, state: FSMContext):
         return
     
     await state.set_state(BuddyStates.menu)
-    await state.update_data(_prev_state="menu")
+    await state.set_state(BuddyStates.menu)
     
     # Получаем внутренний ID ментора из таблицы user_roles
     # Это тот же пользователь, но нам нужен его ID в БД (user_roles.id)
@@ -150,7 +153,7 @@ async def buddy_add_start(message: Message, state: FSMContext):
         return
     
     await state.set_state(BuddyStates.input_full_name)
-    await state.update_data(_prev_state="input_full_name", _state_history=[])
+    pass
     
     await message.answer(
         "➕ *Добавление нового менти*\n\n"
@@ -204,11 +207,7 @@ async def _process_full_name(message: Message, state: FSMContext):
         )
         return
     
-    # Сохраняем историю для навигации назад
-    data = await state.get_data()
-    history = data.get("_state_history", [])
-    
-    await state.update_data(full_name=full_name, _prev_state="input_full_name", _state_history=history)
+    await state.update_data(full_name=full_name)
     await state.set_state(BuddyStates.input_telegram_tag)
     
     await message.answer(
@@ -285,15 +284,9 @@ async def _process_telegram_tag(message: Message, state: FSMContext):
             )
             return
     
-    # Сохраняем историю для навигации назад
-    data = await state.get_data()
-    history = data.get("_state_history", [])
-    history.append("input_full_name")
-    
-    await state.update_data(telegram_tag=tag, _prev_state="input_telegram_tag", _state_history=history)
+    await state.update_data(telegram_tag=tag)
     await state.set_state(BuddyStates.input_assigned_date)
     
-    from datetime import datetime
     today = datetime.now().strftime("%d.%m.%y")
     
     await message.answer(
@@ -301,46 +294,6 @@ async def _process_telegram_tag(message: Message, state: FSMContext):
         f"(по умолчанию: {today})",
         reply_markup=back_kb
     )
-
-
-def parse_date_flexible(date_str: str) -> str | None:
-    """
-    Гибкий парсинг даты. Поддерживает:
-    - Разделители: точка, запятая
-    - Год: 2 цифры (25) или 4 цифры (2025)
-    - Возвращает: ДД.ММ.ГГ (2 цифры года)
-    """
-    import re
-    from datetime import datetime
-    
-    date_str = date_str.strip()
-    
-    # Специальные слова
-    if date_str.lower() in ['сегодня', 'now', '-', 'today']:
-        return datetime.now().strftime("%d.%m.%y")
-    
-    # Заменяем запятые на точки для унификации
-    normalized = date_str.replace(',', '.')
-    
-    # Паттерн: ДД.ММ.ГГ или ДД.ММ.ГГГГ
-    match = re.match(r'^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$', normalized)
-    if not match:
-        return None
-    
-    day, month, year = match.groups()
-    day = day.zfill(2)      # 5 -> 05
-    month = month.zfill(2)  # 3 -> 03
-    
-    # Преобразуем 4-значный год в 2-значный
-    if len(year) == 4:
-        year = year[2:]
-    
-    # Валидация
-    try:
-        datetime.strptime(f"{day}.{month}.{year}", "%d.%m.%y")
-        return f"{day}.{month}.{year}"
-    except ValueError:
-        return None
 
 
 @router.message(BuddyStates.input_assigned_date, HasRole(min_priority=MODULE_ACCESS["buddy_mentor"]))
@@ -466,17 +419,16 @@ async def buddy_add_date(message: Message, state: FSMContext):
         
     except Exception as e:
         # Неизвестная ошибка - выводим детали для диагностики
-        import traceback
         error_details = str(e)[:200]  # Обрезаем длинные сообщения
         logging.error(f"Неизвестная ошибка при добавлении менти: {e}")
         logging.error(traceback.format_exc())
-        
-        # Экранируем спецсимволы Markdown для безопасного вывода
-        error_safe = error_details.replace('_', '\\_').replace('*', '\\*').replace('`', '\\`')
+
+        # Убираем все потенциально опасные символы для Telegram
+        error_clean = re.sub(r'[_*`\[\]()]', '', error_details)
         await message.answer(
             f"❌ Системная ошибка\n\n"
             f"Не удалось сохранить данные.\n\n"
-            f"Детали:\n{error_safe}\n\n"
+            f"Детали:\n{error_clean}\n\n"
             f"Пожалуйста, сообщите администратору.",
             reply_markup=back_kb
         )
@@ -873,7 +825,7 @@ async def lion_assign_start(message: Message, state: FSMContext):
     
     await state.set_state(BuddyStates.menu)
     # Для Lion assign используем специальную логику в back_handler
-    await state.update_data(lion_action="assign_mentee", _prev_state="menu", _state_history=[])
+    await state.update_data(lion_action="assign_mentee")
     
     keyboard = []
     for mentor in mentors:
@@ -904,7 +856,7 @@ async def lion_select_mentor_for_assign(callback: CallbackQuery, state: FSMConte
     
     logging.info(f"LION_SELECT_MENTOR: mentor_id={mentor_id}")
     # Для Lion assign используем специальную логику в back_handler
-    await state.update_data(selected_mentor_id=mentor_id, _prev_state="input_full_name", _state_history=[])
+    await state.update_data(selected_mentor_id=mentor_id)
     await state.set_state(BuddyStates.input_full_name)
     
     # Проверяем, что сохранилось

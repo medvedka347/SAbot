@@ -119,6 +119,10 @@ class Database:
             await db.execute("CREATE INDEX IF NOT EXISTS idx_buddy_mentor ON buddy_mentorships(mentor_id)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_buddy_mentee ON buddy_mentorships(mentee_id)")
             
+            # Индексы для materials и events
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_materials_stage ON materials(stage)")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_events_datetime ON events(event_datetime)")
+            
             # Создаем индексы для быстрого поиска
             await db.execute("CREATE INDEX IF NOT EXISTS idx_bans_active ON bans(user_id, username, banned_until)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_failed_user ON failed_attempts(user_id, username)")
@@ -565,6 +569,7 @@ async def revoke_role(user_id: int, role_key: str) -> bool:
 async def set_user_roles(user_id: int, role_keys: list[str], assigned_by: int = None) -> bool:
     """
     Установить роли пользователя (заменить все текущие).
+    Атомарная операция - либо все роли назначены, либо ничего.
     
     Args:
         user_id: Telegram user_id
@@ -578,19 +583,35 @@ async def set_user_roles(user_id: int, role_keys: list[str], assigned_by: int = 
     if not user:
         return False
     
-    # Удаляем текущие роли
-    await db.execute(
-        "DELETE FROM user_role_assignments WHERE user_id = ?",
-        (user['id'],)
-    )
-    
-    # Назначаем новые
-    success = True
-    for role_key in role_keys:
-        if not await assign_role(user_id, role_key, assigned_by):
-            success = False
-    
-    return success
+    import aiosqlite
+    async with aiosqlite.connect(db.db_path) as conn:
+        await db._init_connection(conn)
+        
+        try:
+            # Удаляем текущие роли
+            await conn.execute(
+                "DELETE FROM user_role_assignments WHERE user_id = ?",
+                (user['id'],)
+            )
+            
+            # Назначаем новые роли в рамках той же транзакции
+            for role_key in role_keys:
+                row = await conn.fetchone("SELECT id FROM roles WHERE role_key = ?", (role_key,))
+                if not row:
+                    continue
+                role_id = row[0]
+                await conn.execute("""
+                    INSERT OR IGNORE INTO user_role_assignments (user_id, role_id, assigned_by)
+                    VALUES (?, ?, ?)
+                """, (user['id'], role_id, assigned_by))
+            
+            await conn.commit()
+            logging.info(f"Роли {role_keys} установлены для пользователя {user_id}")
+            return True
+        except Exception as e:
+            await conn.rollback()
+            logging.error(f"Ошибка установки ролей: {e}")
+            return False
 
 
 # ==================== ОБРАТНАЯ СОВМЕСТИМОСТЬ (старая система) ====================
@@ -621,29 +642,30 @@ def validate_user_id(user_id: any) -> int | None:
 async def get_all_users() -> list[dict]:
     """
     Получить всех пользователей с их ролями.
+    Оптимизировано - один JOIN запрос вместо N+1.
     
     Returns:
         list[dict]: [{'user_id': ..., 'username': ..., 'roles': [...], 'max_priority': ...}, ...]
     """
-    rows = await db.fetchall(
-        "SELECT id, user_id, username FROM user_roles ORDER BY COALESCE(username, ''), user_id"
-    )
+    # Один запрос с GROUP_CONCAT для получения всех данных
+    rows = await db.fetchall("""
+        SELECT 
+            ur.id, ur.user_id, ur.username,
+            GROUP_CONCAT(r.role_key) as role_keys,
+            MAX(r.priority) as max_priority
+        FROM user_roles ur
+        LEFT JOIN user_role_assignments ura ON ur.id = ura.user_id
+        LEFT JOIN roles r ON ura.role_id = r.id
+        GROUP BY ur.id
+        ORDER BY max_priority DESC, COALESCE(ur.username, ''), ur.user_id
+    """)
     
     users = []
     for row in rows:
-        internal_id, user_id, username = row
+        internal_id, user_id, username, role_keys_str, max_priority = row
         
-        # Получаем роли пользователя
-        role_rows = await db.fetchall("""
-            SELECT r.role_key, r.priority 
-            FROM user_role_assignments ura
-            JOIN roles r ON ura.role_id = r.id
-            WHERE ura.user_id = ?
-            ORDER BY r.priority DESC
-        """, (internal_id,))
-        
-        roles = [r[0] for r in role_rows]
-        max_priority = role_rows[0][1] if role_rows else 0
+        roles = role_keys_str.split(',') if role_keys_str else []
+        max_priority = max_priority or 0
         
         users.append({
             "id": internal_id,
@@ -653,9 +675,6 @@ async def get_all_users() -> list[dict]:
             "role": roles[0] if roles else None,  # Для обратной совместимости
             "max_priority": max_priority
         })
-    
-    # Сортируем по приоритету (убывание), затем по username
-    users.sort(key=lambda u: (-u['max_priority'], u['username'] or '', u['user_id'] or 0))
     
     return users
 
@@ -719,12 +738,16 @@ async def add_or_update_user(user_id: int = None, username: str = None, role: st
                 (final_user_id, final_username, internal_id)
             )
         else:
-            # Создаем нового
-            cursor = await db.execute(
-                "INSERT INTO user_roles (user_id, username) VALUES (?, ?)",
-                (final_user_id, final_username)
-            )
-            internal_id = cursor.lastrowid
+            # Создаем нового - используем прямое соединение для получения lastrowid
+            import aiosqlite
+            async with aiosqlite.connect(db.db_path) as conn:
+                await db._init_connection(conn)
+                cursor = await conn.execute(
+                    "INSERT INTO user_roles (user_id, username) VALUES (?, ?)",
+                    (final_user_id, final_username)
+                )
+                await conn.commit()
+                internal_id = cursor.lastrowid
             
     except aiosqlite.IntegrityError:
         # Пробуем обновить существующего
@@ -812,11 +835,10 @@ async def delete_user(user_id: int = None, username: str = None) -> bool:
     return False
 
 
+import os  # module level import
+
 async def setup_initial_users(db_path: str = DB_NAME, initial_admin_id: int = None):
     """Начальная настройка."""
-    from config import ROLE_ADMIN
-    import os
-    
     await cleanup_expired_bans()
     
     count_row = await db.fetchone("SELECT COUNT(*) FROM user_roles")
@@ -897,17 +919,32 @@ async def record_failed_attempt(user_id: int = None, username: str = None) -> di
     """
     username = normalize_username(username)
     
-    existing = await db.fetchone(
-        "SELECT attempt_count FROM failed_attempts WHERE user_id = ? OR username = ?",
-        (user_id, username)
-    )
+    # Ищем сначала по user_id, потом по username (точное совпадение)
+    existing = None
+    if user_id:
+        existing = await db.fetchone(
+            "SELECT attempt_count FROM failed_attempts WHERE user_id = ?",
+            (user_id,)
+        )
+    if not existing and username:
+        existing = await db.fetchone(
+            "SELECT attempt_count FROM failed_attempts WHERE username = ?",
+            (username,)
+        )
     
     if existing:
         new_count = existing[0] + 1
-        await db.execute(
-            "UPDATE failed_attempts SET attempt_count = ?, last_attempt = datetime('now') WHERE user_id = ? OR username = ?",
-            (new_count, user_id, username)
-        )
+        # Обновляем по тому же критерию, по которому нашли
+        if user_id:
+            await db.execute(
+                "UPDATE failed_attempts SET attempt_count = ?, last_attempt = datetime('now') WHERE user_id = ?",
+                (new_count, user_id)
+            )
+        elif username:
+            await db.execute(
+                "UPDATE failed_attempts SET attempt_count = ?, last_attempt = datetime('now') WHERE username = ?",
+                (new_count, username)
+            )
     else:
         new_count = 1
         await db.execute(
@@ -1137,12 +1174,21 @@ class HasMinPriority:
 
 # ==================== EVENTS ====================
 
-async def add_event(event_type: str, dt: str, link: str, announcement: str):
-    datetime.fromisoformat(dt.replace("Z", "+00:00"))
-    await db.execute(
-        "INSERT INTO events (event_type, event_datetime, link, announcement) VALUES (?, ?, ?, ?)",
-        (event_type, dt, link, announcement)
-    )
+async def add_event(event_type: str, dt: str, link: str, announcement: str) -> int:
+    """Add event and return its ID."""
+    try:
+        datetime.fromisoformat(dt.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("Неверный формат даты. Используйте ISO формат (YYYY-MM-DD HH:MM:SS).")
+    import aiosqlite
+    async with aiosqlite.connect(db.db_path) as conn:
+        await db._init_connection(conn)
+        cursor = await conn.execute(
+            "INSERT INTO events (event_type, event_datetime, link, announcement) VALUES (?, ?, ?, ?)",
+            (event_type, dt, link, announcement)
+        )
+        await conn.commit()
+        return cursor.lastrowid
 
 
 async def get_events(upcoming_only: bool = False) -> list[dict]:
@@ -1184,11 +1230,17 @@ async def delete_event(event_id: int) -> bool:
 
 # ==================== MATERIALS ====================
 
-async def add_material(stage: str, title: str, link: str, description: str = ""):
-    await db.execute(
-        "INSERT INTO materials (stage, title, link, description) VALUES (?, ?, ?, ?)",
-        (stage, title, link, description)
-    )
+async def add_material(stage: str, title: str, link: str, description: str = "") -> int:
+    """Add material and return its ID."""
+    import aiosqlite
+    async with aiosqlite.connect(db.db_path) as conn:
+        await db._init_connection(conn)
+        cursor = await conn.execute(
+            "INSERT INTO materials (stage, title, link, description) VALUES (?, ?, ?, ?)",
+            (stage, title, link, description)
+        )
+        await conn.commit()
+        return cursor.lastrowid
 
 
 async def get_materials(stage: str = None) -> list[dict]:
@@ -1293,6 +1345,15 @@ async def add_mentorship(mentor_id: int, mentee_full_name: str,
     if not mentor_exists:
         logging.error(f"add_mentorship: ментор с id={mentor_id} не найден в user_roles")
         raise ValueError(f"Ментор с id={mentor_id} не найден")
+    
+    # Проверяем существование менти если указан
+    if mentee_id:
+        mentee_exists = await db.fetchone(
+            "SELECT 1 FROM user_roles WHERE id = ?", (mentee_id,)
+        )
+        if not mentee_exists:
+            logging.error(f"add_mentorship: менти с id={mentee_id} не найден в user_roles")
+            raise ValueError(f"Менти с id={mentee_id} не найден")
     
     # Используем соединение напрямую для получения lastrowid
     async with aiosqlite.connect(db.db_path) as conn:

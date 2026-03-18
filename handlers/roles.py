@@ -85,7 +85,7 @@ async def roles_menu(message: Message, state: FSMContext):
         return
     
     await state.set_state(RoleStates.menu)
-    await state.update_data(_prev_state="menu")
+    pass
     text = (
         "👥 *Управление ролями пользователей*\n\n"
         "📋 *Список* — просмотр всех пользователей\n"
@@ -117,7 +117,11 @@ async def _show_users_page(
     # Группируем по ролям для отображения
     by_role = {r: [] for r in ROLES}
     for u in page_users:
-        by_role[u['role']].append(u)
+        role = u.get('role') or 'user'  # Если нет роли, считаем user
+        if role in by_role:
+            by_role[role].append(u)
+        else:
+            by_role['user'].append(u)  # На всякий случай
     
     lines = [f"👥 *Всего пользователей: {total_users}* (стр. {page+1}/{total_pages})\n"]
     
@@ -211,8 +215,7 @@ async def role_add_start(message: Message, state: FSMContext):
     if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
         await message.answer("❌ Нет прав.")
         return
-    # Инициализируем историю состояний (пустая, т.к. это первый шаг)
-    await state.update_data(_prev_state="input_users", _state_history=[])
+    pass
     await state.set_state(RoleStates.input_users)
     text = (
         "Введите пользователей для назначения роли:\n\n"
@@ -254,10 +257,7 @@ async def role_receive_users(message: Message, state: FSMContext):
     if len(users) > 5:
         preview.append(f"... и ещё {len(users) - 5}")
     
-    # Сохраняем историю для навигации назад
-    history = ["input_users"]
-    
-    await state.update_data(users_to_assign=users, _prev_state="selecting_role", _state_history=history)
+    await state.update_data(users_to_assign=users)
     await state.set_state(RoleStates.selecting_role)
     
     await message.answer(

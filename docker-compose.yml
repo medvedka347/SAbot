@@ -1,13 +1,18 @@
+# ⚠️ ТОЛЬКО ДЛЯ ЛОКАЛЬНОЙ РАЗРАБОТКИ
+# Для production используется systemd + venv
+# См. DEPLOY.md
+
 services:
   bot:
     build: .
-    restart: always
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - bot-data:/app/data
+      - ./data:/app/data
     environment:
       - DB_NAME=data/user_roles.db
+      - PYTHONUNBUFFERED=1
 
 volumes:
   bot-data:

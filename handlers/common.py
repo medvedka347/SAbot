@@ -17,8 +17,8 @@ from aiogram.fsm.context import FSMContext
 
 from config import ROLE_ADMIN, ROLE_MENTOR, ROLE_LION, get_max_priority, get_primary_role
 from db_utils import (
-    get_user_roles, get_user_roles_simple, cleanup_expired_bans, get_ban_status, 
-    record_failed_attempt, clear_failed_attempts, 
+    get_user_roles, get_user_roles_simple, cleanup_expired_bans, get_ban_status,
+    record_failed_attempt, clear_failed_attempts,
     get_user_by_username, update_user_id_by_username,
     get_user_by_id, get_user_mentor
 )
@@ -26,6 +26,12 @@ from utils import (
     check_rate_limit, kb as kb_builder, user_kb, mentor_kb, admin_kb,
     get_main_keyboard, back_kb
 )
+
+# Импорты States для STATE_MAP - статические для стабильности в systemd
+from handlers.materials import MaterialStates
+from handlers.events import EventStates
+from handlers.roles import RoleStates
+from handlers.buddy import BuddyStates, lion_assign_start
 
 router = Router(name="common")
 
@@ -95,9 +101,15 @@ async def start_handler(message: Message):
             await update_user_id_by_username(username, user_id)
             logging.info(f"Подхвачен user_id {user_id} для @{username} при первой авторизации")
     
-    # Формируем строку ролей для отображения
-    role_display = ', '.join(r['role_key'] for r in roles) if roles else 'user'
-    welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
+    # Формируем строку ролей для отображения с эмодзи
+    ROLE_EMOJI = {
+        'lion': '🦁',
+        'admin': '👑',
+        'mentor': '🎓',
+        'user': '👤'
+    }
+    role_display = ', '.join(f"{ROLE_EMOJI.get(r['role_key'], '🔹')} {r['role_key'].capitalize()}" for r in roles) if roles else '👤 Пользователь'
+    welcome = f"Привет, {message.from_user.first_name}! 👋\n\n*Ваши роли:* {role_display}"
     
     # Выбираем клавиатуру по приоритету роли (admin > mentor > user)
     max_priority = get_max_priority(role_keys)
@@ -187,148 +199,102 @@ async def admin_handler(message: Message, state: FSMContext):
 
 # ==================== Back Button ====================
 
-# Маппинг строковых ключей состояний для навигации назад
-STATE_MAP = {
-    # Materials
-    "selecting_stage": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.selecting_stage,
-    "selecting_stage_public": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.selecting_stage_public,
-    "input_title": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.input_title,
-    "input_link": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.input_link,
-    "input_desc": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.input_desc,
-    "selecting_item": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.selecting_item,
-    "editing": lambda: __import__('handlers.materials', fromlist=['MaterialStates']).MaterialStates.editing,
-    # Events
-    "input_type": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.input_type,
-    "input_datetime": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.input_datetime,
-    "input_link_evt": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.input_link,
-    "input_announcement": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.input_announcement,
-    "confirm_announce": lambda: __import__('handlers.events', fromlist=['EventStates']).EventStates.confirm_announce,
-    # Roles
-    "input_users": lambda: __import__('handlers.roles', fromlist=['RoleStates']).RoleStates.input_users,
-    "selecting_role": lambda: __import__('handlers.roles', fromlist=['RoleStates']).RoleStates.selecting_role,
-    "selecting_user_to_delete": lambda: __import__('handlers.roles', fromlist=['RoleStates']).RoleStates.selecting_user_to_delete,
-    # Buddy
-    "input_full_name": lambda: __import__('handlers.buddy', fromlist=['BuddyStates']).BuddyStates.input_full_name,
-    "input_telegram_tag": lambda: __import__('handlers.buddy', fromlist=['BuddyStates']).BuddyStates.input_telegram_tag,
-    "input_assigned_date": lambda: __import__('handlers.buddy', fromlist=['BuddyStates']).BuddyStates.input_assigned_date,
+# Маппинг для навигации "Назад" к ключевым состояниям (entry points)
+# Принцип хлебных крошек - возвращаемся к ключевому состоянию модуля
+ENTRY_POINT_MAP = {
+    # Materials - entry point это selecting_stage (выбор раздела)
+    MaterialStates.input_title: MaterialStates.selecting_stage,
+    MaterialStates.input_link: MaterialStates.selecting_stage,
+    MaterialStates.input_desc: MaterialStates.selecting_stage,
+    MaterialStates.selecting_item: MaterialStates.selecting_stage,
+    MaterialStates.editing: MaterialStates.selecting_stage,
+    # Публичный просмотр - остаёмся в выборе раздела
+    MaterialStates.selecting_stage_public: MaterialStates.selecting_stage_public,
+    
+    # Events - entry point это menu (главное меню событий)
+    EventStates.input_type: EventStates.menu,
+    EventStates.input_datetime: EventStates.menu,
+    EventStates.input_link: EventStates.menu,
+    EventStates.input_announcement: EventStates.menu,
+    EventStates.confirm_announce: EventStates.menu,
+    EventStates.selecting_item: EventStates.menu,
+    EventStates.editing: EventStates.menu,
+    
+    # Roles - entry point это menu
+    RoleStates.input_users: RoleStates.menu,
+    RoleStates.selecting_role: RoleStates.menu,
+    RoleStates.selecting_user_to_delete: RoleStates.menu,
+    
+    # Buddy - entry point это menu
+    BuddyStates.input_full_name: BuddyStates.menu,
+    BuddyStates.input_telegram_tag: BuddyStates.menu,
+    BuddyStates.input_assigned_date: BuddyStates.menu,
+    BuddyStates.selecting_status: BuddyStates.menu,
 }
+
+
+@router.message(F.text == "🏠 Главное меню")
+async def main_menu_handler(message: Message, state: FSMContext):
+    """Обработчик 'Главное меню' - всегда возвращает в стартовое меню.
+    
+    Отменяет текущую операцию и очищает все состояния.
+    """
+    # Очищаем состояние полностью
+    await state.clear()
+    
+    # Получаем роли пользователя
+    roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
+    role_display = ', '.join(r['role_key'] for r in roles) if roles else 'user'
+    
+    welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
+    kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
+    
+    await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
 
 
 @router.message(F.text.in_(["🔙 Назад", "Назад"]))
 async def back_handler(message: Message, state: FSMContext):
-    """Обработчик 'Назад' - возвращает на предыдущий шаг или в главное меню.
+    """Обработчик 'Назад' - возвращает к ключевому состоянию (entry point).
     
-    Использует стек истории _state_history для поддержки многоуровневого возврата.
+    Принцип хлебных крошек - возвращаемся к ключевому состоянию модуля:
+    - Для Materials: возвращаемся к selecting_stage (выбор раздела)
+    - Для Events/Roles/Buddy: возвращаемся к menu (главное меню модуля)
+    
+    Если уже в ключевом состоянии - возвращаемся в главное меню бота.
     """
-    data = await state.get_data()
+    # Получаем текущее состояние
+    current_state = await state.get_state()
     
-    # Пробуем сначала новый стек истории
-    state_history = data.get("_state_history", [])
-    prev_state_key = data.get("_prev_state")
-    
-    # DEBUG: логируем что пришло
-    logging.info(f"BACK_HANDLER: state_history={state_history}, prev_state_key={prev_state_key!r}")
-    
-    # Специальная обработка для Льва при назначении бадди
-    if prev_state_key == "menu" and data.get("lion_action") == "assign_mentee":
-        # Возврат к выбору ментора для льва
-        from handlers.buddy import lion_assign_start
-        await lion_assign_start(message, state)
+    if not current_state:
+        # Нет активного состояния - просто показываем главное меню
+        await main_menu_handler(message, state)
         return
     
-    # Общая обработка для "menu" - возврат в главное меню
-    if prev_state_key == "menu":
-        await state.clear()
-        roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
-        role_display = ', '.join(r['role_key'] for r in roles) if roles else 'user'
-        welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
-        kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
-        await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
-        return
+    # Ищем entry point для текущего состояния
+    # current_state приходит как строка "ModuleStates:state_name"
+    entry_point = None
+    for state_obj, entry_obj in ENTRY_POINT_MAP.items():
+        if state_obj.state == current_state:
+            entry_point = entry_obj
+            break
     
-    # Используем стек истории если он есть
-    if state_history:
-        # Берём последнее состояние из стека
-        prev_state_key = state_history.pop()
+    if entry_point:
+        # Переходим к entry point
+        await state.set_state(entry_point)
         
-        if prev_state_key in STATE_MAP:
-            try:
-                prev_state = STATE_MAP[prev_state_key]()
-                await state.set_state(prev_state)
-                # Сохраняем обновлённый стек
-                await state.update_data(_state_history=state_history)
-                
-                # Формируем сообщение в зависимости от состояния
-                back_messages = {
-                    "selecting_stage": "Выберите раздел:",
-                    "selecting_stage_public": "Выберите раздел:",
-                    "input_title": "Введите название:",
-                    "input_link": "Введите ссылку (https://...):",
-                    "input_desc": "Введите описание (или 'пропустить'):",
-                    "selecting_item": "Выберите из списка:",
-                    "editing": "Отправьте новые данные (используйте '.' для пропуска):",
-                    "input_type": "Введите тип (Вебинар, Митап, Квиз):",
-                    "input_datetime": "Введите дату `2024-12-31 18:00:00`:",
-                    "input_link_evt": "Введите ссылку (или 'нет'):",
-                    "input_announcement": "Введите анонс:",
-                    "input_users": "Введите пользователей (ID или @username):",
-                    "selecting_role": "Выберите роль:",
-                    # Buddy
-                    "input_full_name": "Введите ФИО менти:",
-                    "input_telegram_tag": "Введите тег в Telegram (@username):",
-                    "input_assigned_date": "Введите дату назначения (ДД.ММ.ГГ):",
-                }
-                msg_text = back_messages.get(prev_state_key, "Вернулся на шаг назад.")
-                await message.answer(f"🔙 {msg_text}", reply_markup=back_kb)
-                return
-            except Exception as e:
-                logging.error(f"BACK_HANDLER ERROR (stack): {e}", exc_info=True)
-                # При ошибке продолжаем к fallback
-    
-    # Fallback на старую систему _prev_state/_prev_chain
-    if prev_state_key and prev_state_key in STATE_MAP:
-        try:
-            prev_state = STATE_MAP[prev_state_key]()
-            await state.set_state(prev_state)
-            # Восстанавливаем цепочку для следующего назад (если есть)
-            prev_chain = data.get("_prev_chain")
-            await state.update_data(_prev_state=prev_chain, _prev_chain=None)
-            
-            # Формируем сообщение в зависимости от состояния
-            back_messages = {
-                "selecting_stage": "Выберите раздел:",
-                "selecting_stage_public": "Выберите раздел:",
-                "input_title": "Введите название:",
-                "input_link": "Введите ссылку (https://...):",
-                "input_desc": "Введите описание (или 'пропустить'):",
-                "selecting_item": "Выберите из списка:",
-                "editing": "Отправьте новые данные (используйте '.' для пропуска):",
-                "input_type": "Введите тип (Вебинар, Митап, Квиз):",
-                "input_datetime": "Введите дату `2024-12-31 18:00:00`:",
-                "input_link_evt": "Введите ссылку (или 'нет'):",
-                "input_announcement": "Введите анонс:",
-                "input_users": "Введите пользователей (ID или @username):",
-                "selecting_role": "Выберите роль:",
-                # Buddy
-                "input_full_name": "Введите ФИО менти:",
-                "input_telegram_tag": "Введите тег в Telegram (@username):",
-                "input_assigned_date": "Введите дату назначения (ДД.ММ.ГГ):",
-            }
-            msg_text = back_messages.get(prev_state_key, "Вернулся на шаг назад.")
-            await message.answer(f"🔙 {msg_text}", reply_markup=back_kb)
-            return
-        except Exception as e:
-            # При ошибке - в главное меню
-            logging.error(f"BACK_HANDLER ERROR: {e}", exc_info=True)
-            pass
-    
-    # Нет истории или ошибка - в главное меню
-    await state.clear()
-    roles = await get_user_roles(user_id=message.from_user.id, username=message.from_user.username)
-    role_display = ', '.join(r['role_key'] for r in roles) if roles else 'user'
-    welcome = f"Привет, {message.from_user.first_name}! 👋\n\nРоли: *{role_display}*"
-    kb = await get_main_keyboard(message.from_user.id) if message.chat.type == "private" else None
-    await message.answer(welcome, parse_mode="Markdown", reply_markup=kb)
+        # Определяем сообщение в зависимости от entry point
+        entry_messages = {
+            MaterialStates.selecting_stage: "📦 Управление материалами\n\nВыберите раздел:",
+            EventStates.menu: "📋 Управление событиями",
+            RoleStates.menu: "👥 Управление ролями",
+            BuddyStates.menu: "🤝 Buddy - панель ментора",
+        }
+        
+        msg_text = entry_messages.get(entry_point, "Выберите действие:")
+        await message.answer(f"🔙 {msg_text}", reply_markup=back_kb)
+    else:
+        # Уже в entry point или неизвестное состояние - возвращаемся в главное меню
+        await main_menu_handler(message, state)
 
 
 # ==================== Buddy ====================
@@ -354,8 +320,7 @@ async def buddy_handler(message: Message, state: FSMContext):
     
     if is_lion:
         # Для Льва (мета-админа) - показываем панель управления всей системой
-        from utils import kb
-        lion_kb = kb(["🦁 Панель Льва", "🔙 Назад"])
+        lion_kb = kb_builder(["🦁 Панель Льва", "🔙 Назад"])
         await message.answer(
             "🤝 *Buddy*\n\n"
             "Вы имеете права Льва. Используйте панель для управления системой Buddy.",
@@ -364,8 +329,7 @@ async def buddy_handler(message: Message, state: FSMContext):
         )
     elif is_mentor:
         # Для менторов - показываем меню с кнопкой "Список менти"
-        from utils import kb
-        buddy_kb = kb(["📋 Список менти", "➕ Добавить менти", "🔙 Назад"])
+        buddy_kb = kb_builder(["📋 Список менти", "➕ Добавить менти", "🔙 Назад"])
         await message.answer(
             "🤝 *Buddy - Панель ментора*\n\n"
             "Управляйте своими менти и отслеживайте их прогресс.",
@@ -374,8 +338,6 @@ async def buddy_handler(message: Message, state: FSMContext):
         )
     else:
         # Для обычных пользователей - проверяем есть ли у них ментор
-        from db_utils import get_user_mentor
-        
         # Получаем user_id из БД
         user = await get_user_by_username(message.from_user.username) if message.from_user.username else None
         if not user:

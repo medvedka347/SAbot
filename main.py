@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import signal
 import sys
 from aiogram import Bot, Dispatcher
 from aiogram.types import ErrorEvent
@@ -70,8 +71,7 @@ async def main():
     def signal_handler(signum, frame):
         logging.info(f"Получен сигнал {signum}, начинаем graceful shutdown...")
         shutdown_event.set()
-    
-    import signal
+
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 

@@ -4,12 +4,15 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/root/SABot
-EnvironmentFile=/root/SABot/.env
-ExecStart=/root/SABot/.venv/bin/python /root/SABot/main.py
+User=sabot
+Group=sabot
+WorkingDirectory=/opt/sabot
+EnvironmentFile=/opt/sabot/.env
+Environment=PYTHONPATH=/opt/sabot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/sabot/.venv/bin/python /opt/sabot/main.py
 Restart=always
-RestartSec=10
+RestartSec=5
 StartLimitIntervalSec=60
 StartLimitBurst=3
 KillMode=process
@@ -17,6 +20,16 @@ TimeoutSec=30
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=sabot
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sabot/data
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
 
 [Install]
 WantedBy=multi-user.target

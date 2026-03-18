@@ -87,7 +87,7 @@ async def material_select_stage(message: Message, state: FSMContext):
         await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
-    await state.update_data(action="show_list", _prev_state="menu")
+    await state.update_data(action="show_list")
     await message.answer("Выберите раздел:", reply_markup=stage_kb)
 
 
@@ -126,7 +126,7 @@ async def handle_stage_selection_admin(message: Message, state: FSMContext):
     
     # Добавление материала
     if action == "add_material":
-        await state.update_data(stage=stage, _prev_state="selecting_stage", _state_history=[])
+        await state.update_data(stage=stage)
         await state.set_state(MaterialStates.input_title)
         await message.answer("Введите название:", reply_markup=back_kb)
         return
@@ -143,7 +143,7 @@ async def handle_stage_selection_admin(message: Message, state: FSMContext):
             await message.answer("📭 Пусто", reply_markup=stage_kb)
             return
         
-        await state.update_data(stage=stage, _prev_state="selecting_stage")
+        await state.update_data(stage=stage)
         await state.set_state(MaterialStates.selecting_item)
         
         kb_inline = inline_kb([
@@ -166,7 +166,7 @@ async def material_add_start(message: Message, state: FSMContext):
         await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
-    await state.update_data(action="add_material", _prev_state="menu")
+    await state.update_data(action="add_material")
     await message.answer("➕ Выберите раздел для добавления:", reply_markup=stage_kb)
 
 
@@ -179,12 +179,7 @@ async def material_add_title(message: Message, state: FSMContext):
         await message.answer("❌ Название слишком длинное (макс 200 символов)")
         return
     
-    # Сохраняем историю для навигации назад
-    data = await state.get_data()
-    history = data.get("_state_history", [])
-    history.append("selecting_stage")
-    
-    await state.update_data(title=message.text, _prev_state="input_title", _state_history=history)
+    await state.update_data(title=message.text)
     await state.set_state(MaterialStates.input_link)
     await message.answer("Введите ссылку (https://...):", reply_markup=back_kb)
 
@@ -202,12 +197,7 @@ async def material_add_link(message: Message, state: FSMContext):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
     
-    # Сохраняем историю для навигации назад
-    data = await state.get_data()
-    history = data.get("_state_history", [])
-    history.append("input_title")
-    
-    await state.update_data(link=link, _prev_state="input_link", _state_history=history)
+    await state.update_data(link=link)
     await state.set_state(MaterialStates.input_desc)
     await message.answer("Введите описание (или 'пропустить'):", reply_markup=back_kb)
 
@@ -250,7 +240,7 @@ async def material_edit_select_stage(message: Message, state: FSMContext):
         await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
-    await state.update_data(action="select_for_edit", _prev_state="menu")
+    await state.update_data(action="select_for_edit")
     await message.answer("✏️ Выберите раздел:", reply_markup=stage_kb)
 
 
@@ -275,15 +265,9 @@ async def material_edit_callback(callback: CallbackQuery, state: FSMContext):
         await safe_edit_text(callback, "❌ Не найдено")
         return
     
-    # Получаем текущий _prev_state (selecting_stage) для цепочки навигации
-    data = await state.get_data()
-    history = data.get("_state_history", [])
-    history.append("selecting_stage")  # Добавляем selecting_stage в историю
     await state.update_data(
-        edit_id=mat_id, 
-        edit_item=mat, 
-        _prev_state="selecting_item",
-        _state_history=history  # Сохраняем историю для многоуровневого возврата
+        edit_id=mat_id,
+        edit_item=mat
     )
     await state.set_state(MaterialStates.editing)
     
@@ -343,7 +327,7 @@ async def material_delete_select_stage(message: Message, state: FSMContext):
         await message.answer("❌ Нет прав.")
         return
     await state.set_state(MaterialStates.selecting_stage)
-    await state.update_data(action="select_for_delete", _prev_state="menu")
+    await state.update_data(action="select_for_delete")
     await message.answer("🗑️ Выберите раздел:", reply_markup=stage_kb)
 
 
@@ -449,8 +433,7 @@ async def public_materials_select(message: Message, state: FSMContext):
         return
     
     await state.set_state(MaterialStates.selecting_stage_public)
-    # Устанавливаем _prev_state для возврата в главное меню
-    await state.update_data(_prev_state="menu")
+    # Очищаем данные и возвращаемся в главное меню
     await message.answer(
         "📚 *Материалы*\n\n"
         "Выберите нужный раздел в меню ниже:\n"

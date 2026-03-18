@@ -35,7 +35,7 @@ ROLE_DISPLAY_NAMES = {
 # Минимальные приоритеты для модулей
 MODULE_ACCESS = {
     "materials": ROLE_PRIORITIES[ROLE_ADMIN],      # CRUD материалов
-    "events": ROLE_PRIORITIES[ROLE_ADMIN],         # CRUD событий
+    "events": ROLE_PRIORITIES[ROLE_MENTOR],        # CRUD событий (ментор и выше)
     "roles": ROLE_PRIORITIES[ROLE_ADMIN],          # Управление ролями
     "bans": ROLE_PRIORITIES[ROLE_ADMIN],           # Управление банами
     "buddy_lion": ROLE_PRIORITIES[ROLE_LION],      # Панель Льва

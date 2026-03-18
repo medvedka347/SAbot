@@ -15,7 +15,7 @@ from aiogram.fsm.context import FSMContext
 
 from config import MODULE_ACCESS, ANNOUNCEMENT_GROUP_ID, ANNOUNCEMENT_TOPIC_ID
 from db_utils import get_events, add_event, update_event, delete_event, HasRole
-from utils import check_rate_limit, kb, inline_kb, back_kb, escape_md, safe_edit_text, get_main_keyboard
+from utils import check_rate_limit, kb, inline_kb, back_kb, escape_md, safe_edit_text, get_main_keyboard, parse_datetime_flexible
 
 router = Router(name="events")
 
@@ -65,7 +65,7 @@ async def events_menu(message: Message, state: FSMContext):
         await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
     await state.set_state(EventStates.menu)
-    await state.update_data(_prev_state="menu")
+    pass
     await message.answer("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
 
 
@@ -108,12 +108,7 @@ async def event_add_type(message: Message, state: FSMContext):
         await message.answer("❌ Тип события слишком длинный (макс 100 символов)")
         return
     
-    # Сохраняем историю для навигации назад
-    data = await state.get_data()
-    history = data.get("_state_history", [])
-    history.append("menu")  # Пришли из меню событий
-    
-    await state.update_data(event_type=message.text, _prev_state="input_type", _state_history=history)
+    await state.update_data(event_type=message.text)
     await state.set_state(EventStates.input_datetime)
     await message.answer(
         "📅 *Введите дату и время*\n\n"
@@ -134,19 +129,13 @@ async def event_add_datetime(message: Message, state: FSMContext):
         return
     
     # Используем гибкий парсинг даты
-    from utils import parse_datetime_flexible
     dt_iso, error = parse_datetime_flexible(message.text)
     
     if error:
         await message.answer(error, parse_mode="Markdown")
         return
     
-    # Сохраняем историю для навигации назад
-    data = await state.get_data()
-    history = data.get("_state_history", [])
-    history.append("input_datetime")
-    
-    await state.update_data(event_datetime=dt_iso, _prev_state="input_link_evt", _state_history=history)
+    await state.update_data(event_datetime=dt_iso)
     await state.set_state(EventStates.input_link)
     await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
 
@@ -162,12 +151,7 @@ async def event_add_link(message: Message, state: FSMContext):
     elif not (link.startswith('http://') or link.startswith('https://')):
         await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
-    # Сохраняем историю для навигации назад
-    data = await state.get_data()
-    history = data.get("_state_history", [])
-    history.append("input_link_evt")
-    
-    await state.update_data(event_link=link, _prev_state="input_announcement", _state_history=history)
+    await state.update_data(event_link=link)
     await state.set_state(EventStates.input_announcement)
     await message.answer("Введите анонс:", reply_markup=back_kb)
 
@@ -197,11 +181,6 @@ async def event_add_announcement(message: Message, state: FSMContext):
     
     await state.update_data(event_announcement=ann)
     
-    # Сохраняем историю для навигации назад
-    data = await state.get_data()
-    history = data.get("_state_history", [])
-    history.append("input_link_evt")
-    
     # Если не настроена группа для анонсов - сразу сохраняем
     if not ANNOUNCEMENT_GROUP_ID:
         try:
@@ -214,7 +193,6 @@ async def event_add_announcement(message: Message, state: FSMContext):
         return
     
     # Спрашиваем про размещение анонса
-    await state.update_data(_prev_state="input_announcement", _state_history=history)
     await state.set_state(EventStates.confirm_announce)
     preview = (
         f"📅 *{event_type}*\n"
@@ -225,7 +203,7 @@ async def event_add_announcement(message: Message, state: FSMContext):
     await message.answer(
         f"{preview}\n\n📢 Разместить анонс в группе?",
         parse_mode="Markdown",
-        reply_markup=kb(["✅ Да", "❌ Нет"])
+        reply_markup=kb(["✅ Да", "❌ Нет", "🏠 Главное меню"])
     )
 
 
@@ -259,8 +237,8 @@ async def event_confirm_announce(message: Message, state: FSMContext, bot: Bot):
         await events_menu(message, state)
         return
     
-    # Если выбрано "Да" - постим в группу
-    if message.text == "✅ Да" and ANNOUNCEMENT_GROUP_ID:
+    # Если выбрано "Да" - постим в группу (проверяем без эмодзи)
+    if message.text and "Да" in message.text and "Нет" not in message.text and ANNOUNCEMENT_GROUP_ID:
         try:
             group_text = (
                 f"📅 *{event_type}*\n"
@@ -335,7 +313,7 @@ async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
         return
     
     # Сохраняем историю для навигации назад
-    await state.update_data(edit_id=ev_id, edit_ev=ev, _prev_state="selecting_item", _state_history=[])
+    await state.update_data(edit_id=ev_id, edit_ev=ev)
     await state.set_state(EventStates.editing)
     await safe_edit_text(
         callback,

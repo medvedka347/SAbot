@@ -1,343 +1,177 @@
-# 🚀 Полный процесс деплоя SABot на удалённый сервер
+# 🚀 Деплой SABot
 
-## Содержание
-
-1. [Требования](#требования)
-2. [Подготовка сервера](#1-подготовка-сервера)
-3. [Установка бота](#2-установка-бота)
-4. [Настройка окружения](#3-настройка-окружения)
-5. [Запуск как systemd-сервис](#4-запуск-как-systemd-сервис)
-6. [Настройка CI/CD](#5-настройка-cicd-автоматический-деплой)
-7. [Обновление бота](#6-обновление-бота)
-8. [Мониторинг и логи](#7-мониторинг-и-логи)
-9. [Устранение неполадок](#8-устранение-неполадок)
-10. [Деплой через Docker](#9-деплой-через-docker)
-
----
-
-## Требования
-
-- **Сервер**: Ubuntu 20.04+ (или Debian 11+) с SSH-доступом
-- **Python**: 3.10+
-- **Telegram Bot Token**: получить у [@BotFather](https://t.me/BotFather)
-- **Telegram ID администратора**: получить у [@userinfobot](https://t.me/userinfobot)
-
----
-
-## 1. Подготовка сервера
-
-Подключитесь к серверу по SSH:
+## Быстрый старт (автоматический деплой)
 
 ```bash
+# На сервере (Ubuntu/Debian) выполнить один раз:
+curl -sSL https://raw.githubusercontent.com/medvedka347/SAbot/main/deploy/setup-server.sh | bash
+```
+
+Затем:
+1. Отредактировать `/opt/sabot/.env` (добавить BOT_TOKEN и INITIAL_ADMIN_ID)
+2. Запустить: `systemctl start sabot`
+
+---
+
+## Ручная настройка
+
+### 1. Требования
+
+- Ubuntu 20.04+ / Debian 11+
+- Python 3.10+
+- Git
+
+### 2. Установка
+
+```bash
+# Подключиться к серверу
 ssh root@YOUR_SERVER_IP
+
+# Запустить скрипт установки
+cd /root
+curl -sSL https://raw.githubusercontent.com/medvedka347/SAbot/main/deploy/setup-server.sh -o setup-server.sh
+bash setup-server.sh
 ```
 
-Обновите систему и установите зависимости:
+### 3. Настройка окружения
 
 ```bash
-apt update && apt upgrade -y
-apt install -y python3 python3-pip python3-venv git
+# Отредактировать .env
+nano /opt/sabot/.env
 ```
 
----
-
-## 2. Установка бота
-
-### Вариант A: Автоматическая установка (рекомендуется)
-
-```bash
-# Скачайте и запустите скрипт установки
-git clone https://github.com/medvedka347/SAbot.git /root/SABot
-cd /root/SABot
-bash deploy/setup-server.sh
-```
-
-Скрипт автоматически:
-- Установит системные зависимости
-- Создаст виртуальное окружение
-- Установит Python-зависимости
-- Скопирует systemd-сервис
-- Создаст шаблон `.env` файла
-
-### Вариант B: Ручная установка
-
-```bash
-# 1. Клонирование репозитория
-mkdir -p /root/SABot
-cd /root/SABot
-git clone https://github.com/medvedka347/SAbot.git .
-
-# 2. Создание виртуального окружения
-python3 -m venv .venv
-source .venv/bin/activate
-
-# 3. Установка зависимостей
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
----
-
-## 3. Настройка окружения
-
-Создайте файл `.env` из шаблона:
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-Заполните обязательные переменные:
-
+Заполнить:
 ```env
-# Токен бота (получить у @BotFather в Telegram)
-BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-
-# Имя файла базы данных
-DB_NAME=user_roles.db
-
-# Telegram ID первого администратора (получить у @userinfobot)
-INITIAL_ADMIN_ID=123456789
+BOT_TOKEN=your_bot_token_here
+INITIAL_ADMIN_ID=your_telegram_id
 ```
 
-Сохраните файл: `Ctrl+O`, `Enter`, `Ctrl+X`.
-
-### Проверка перед запуском
-
-Убедитесь, что бот запускается вручную:
+### 4. Запуск
 
 ```bash
-cd /root/SABot
-source .venv/bin/activate
-python main.py
-```
-
-Если в консоли появилось `Бот запущен` — всё настроено правильно. Остановите бот (`Ctrl+C`) и переходите к настройке сервиса.
-
----
-
-## 4. Запуск как systemd-сервис
-
-Systemd обеспечивает автозапуск бота при перезагрузке сервера и автоматический перезапуск при сбоях.
-
-```bash
-# 1. Копирование файла сервиса
-cp /root/SABot/deploy/sabot.service /etc/systemd/system/
-
-# 2. Перезагрузка конфигурации systemd
-systemctl daemon-reload
-
-# 3. Включение автозапуска при загрузке системы
-systemctl enable sabot
-
-# 4. Запуск бота
 systemctl start sabot
-
-# 5. Проверка статуса
 systemctl status sabot
 ```
 
-Если статус `active (running)` — бот работает.
-
 ---
 
-## 5. Настройка CI/CD (автоматический деплой)
+## Настройка GitHub Actions (CI/CD)
 
-CI/CD позволяет автоматически обновлять бота при каждом `git push` в ветку `main`.
-
-### 5.1 Генерация SSH-ключа на сервере
+### На сервере (один раз)
 
 ```bash
+# Создать SSH ключ для GitHub Actions
 ssh-keygen -t ed25519 -C "github-actions" -f /root/.ssh/github_actions -N ""
-```
-
-Добавьте публичный ключ в `authorized_keys`:
-
-```bash
 cat /root/.ssh/github_actions.pub >> /root/.ssh/authorized_keys
-```
 
-Скопируйте приватный ключ (понадобится для GitHub):
-
-```bash
+# Скопировать приватный ключ (для GitHub)
 cat /root/.ssh/github_actions
 ```
 
-### 5.2 Добавление секретов в GitHub
+### В GitHub (Settings → Secrets and variables → Actions)
 
-Перейдите в репозиторий → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**:
-
-| Имя секрета | Значение |
-|---|---|
-| `SSH_PRIVATE_KEY` | Содержимое приватного ключа (весь вывод `cat /root/.ssh/github_actions`) |
-| `SSH_HOST` | IP-адрес вашего сервера |
+| Name | Value |
+|------|-------|
+| `SSH_PRIVATE_KEY` | Приватный ключ из команды выше |
+| `SSH_HOST` | IP сервера |
 | `SSH_USER` | `root` |
 
-### 5.3 Готово
-
-Теперь при каждом `git push` в ветку `main` GitHub Actions автоматически:
-1. Подключится к серверу по SSH
-2. Выполнит `git pull`
-3. Перезапустит сервис бота
-
-Проверить статус деплоя: https://github.com/medvedka347/SAbot/actions
+Теперь при каждом `git push` в main бот автоматически обновится.
 
 ---
 
-## 6. Обновление бота
-
-### При настроенном CI/CD
+## Управление ботом
 
 ```bash
-# На локальной машине
-git add .
-git commit -m "Описание изменений"
-git push origin main
-# Деплой произойдёт автоматически
-```
-
-### Ручное обновление на сервере
-
-```bash
-cd /root/SABot
-git pull origin main
-source .venv/bin/activate
-pip install -r requirements.txt
-sudo systemctl restart sabot
-```
-
----
-
-## 7. Мониторинг и логи
-
-```bash
-# Просмотр логов в реальном времени
-journalctl -u sabot -f
-
-# Последние 100 строк логов
-journalctl -u sabot -n 100
-
-# Логи за сегодня
-journalctl -u sabot --since today
-
-# Статус сервиса
+# Статус
 systemctl status sabot
 
-# Перезапуск бота
+# Логи в реальном времени
+journalctl -u sabot -f
+
+# Последние 100 строк
+journalctl -u sabot -n 100 --no-pager
+
+# Перезапуск
 systemctl restart sabot
 
-# Остановка бота
+# Остановка
 systemctl stop sabot
 ```
 
 ---
 
-## 8. Устранение неполадок
+## Автовосстановление
+
+Бот автоматически перезапускается при:
+- Краше приложения
+- Перезагрузке сервера
+- Обновлении через CI/CD
+
+Если бот падает 3 раза за минуту — systemd делает паузу на 60 секунд.
+
+---
+
+## Backup базы данных
+
+Автоматический backup создаётся при каждом деплое:
+```
+/opt/sabot/data/user_roles.db.backup.YYYYMMDD_HHMMSS
+```
+
+Ручной backup:
+```bash
+cp /opt/sabot/data/user_roles.db /opt/sabot/data/user_roles.db.manual.$(date +%Y%m%d)
+```
+
+---
+
+## Решение проблем
 
 ### Бот не запускается
 
 ```bash
-# Проверьте логи
-journalctl -u sabot -n 50 --no-pager
+# Проверить логи
+journalctl -u sabot -n 50
 
-# Попробуйте запустить вручную
-cd /root/SABot
+# Проверить .env
+ls -la /opt/sabot/.env
+cat /opt/sabot/.env
+
+# Запустить вручную для диагностики
+cd /opt/sabot
 source .venv/bin/activate
 python main.py
 ```
 
-### `BOT_TOKEN не найден`
-
-Файл `.env` отсутствует или не содержит `BOT_TOKEN`:
-
-```bash
-cat /root/SABot/.env
-# Если файла нет:
-cp /root/SABot/.env.example /root/SABot/.env
-nano /root/SABot/.env
-```
-
-### `ModuleNotFoundError`
-
-Зависимости не установлены:
-
-```bash
-cd /root/SABot
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Бот не отвечает на `/start`
-
-Проверьте, что `INITIAL_ADMIN_ID` в `.env` содержит ваш Telegram ID. Если база уже создана с неверным ID, удалите её и перезапустите:
-
-```bash
-rm /root/SABot/user_roles.db
-systemctl restart sabot
-```
-
 ### CI/CD не работает
 
-1. Проверьте секреты в GitHub Settings → Secrets
-2. Проверьте логи на вкладке Actions в репозитории
-3. Убедитесь, что SSH-ключ добавлен в `authorized_keys` на сервере
-
----
-
-## Примечание по безопасности
-
-По умолчанию бот запускается от имени `root`. Для повышения безопасности рекомендуется создать выделенного пользователя:
-
 ```bash
-useradd -r -s /bin/false sabot
-mkdir -p /opt/SABot
-chown -R sabot:sabot /opt/SABot
+# Проверить SSH ключ
+ls -la /root/.ssh/
+grep "github-actions" /root/.ssh/authorized_keys
+
+# Проверить права на .ssh
+chmod 700 /root/.ssh
+chmod 600 /root/.ssh/authorized_keys
 ```
 
-При этом потребуется обновить пути в `sabot.service` и `setup-server.sh`.
-
 ---
 
-## 9. Деплой через Docker
+## Локальная разработка (Docker)
 
-Docker позволяет запустить бота в изолированном контейнере без установки Python и зависимостей на хост.
-
-### Требования
-
-- Docker и Docker Compose установлены на сервере
-
-### Быстрый старт
+Для локальной разработки можно использовать Docker:
 
 ```bash
-# 1. Клонирование репозитория
-git clone https://github.com/medvedka347/SAbot.git /root/SABot
-cd /root/SABot
-
-# 2. Создание .env файла
+# Скопировать .env
 cp .env.example .env
-nano .env
-# Заполните BOT_TOKEN и INITIAL_ADMIN_ID
+# Отредактировать .env
 
-# 3. Запуск
+# Запустить
 docker compose up -d
-```
 
-### Управление контейнером
-
-```bash
-# Просмотр логов
+# Логи
 docker compose logs -f
-
-# Перезапуск
-docker compose restart
-
-# Остановка
-docker compose down
-
-# Пересборка после обновления кода
-docker compose up -d --build
 ```
 
-### Данные
-
-База данных SQLite хранится в Docker-томе `bot-data`, поэтому данные сохраняются между перезапусками контейнера.
+**⚠️ Docker не используется для production деплоя — только systemd.**
