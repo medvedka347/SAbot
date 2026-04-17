@@ -1,116 +1,84 @@
 """
 Модуль управления событиями.
-
-Включает:
-- Публичный просмотр предстоящих событий
-- Админский CRUD (создание, чтение, обновление, удаление)
-- Интеграцию с группой для анонсов
 """
 import logging
 from datetime import datetime
-from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
+from telegram import Update, InlineKeyboardButton
+from telegram.ext import ContextTypes
 
 from config import MODULE_ACCESS, ANNOUNCEMENT_GROUP_ID, ANNOUNCEMENT_TOPIC_ID
-from db_utils import get_events, add_event, update_event, delete_event, HasRole
-from utils import check_rate_limit, kb, inline_kb, back_kb, escape_md, safe_edit_text, get_main_keyboard, parse_datetime_flexible
+from db_utils import require_any_role, get_events, add_event, update_event, delete_event
+from utils import check_rate_limit, kb, inline_kb, back_kb, escape_md, get_main_keyboard, parse_datetime_flexible
+from handlers.conversation_utils import get_user_state, set_user_state, clear_user_state
 
-router = Router(name="events")
+STATE_EVENTS_MENU = "events_menu"
+STATE_EVENTS_SELECTING_ITEM = "events_selecting_item"
+STATE_EVENTS_INPUT_TYPE = "events_input_type"
+STATE_EVENTS_INPUT_DATETIME = "events_input_datetime"
+STATE_EVENTS_INPUT_LINK = "events_input_link"
+STATE_EVENTS_INPUT_ANNOUNCEMENT = "events_input_announcement"
+STATE_EVENTS_CONFIRM_ANNOUNCE = "events_confirm_announce"
+STATE_EVENTS_EDITING = "events_editing"
 
+events_menu_kb = kb(["📖 Просмотреть", "➕ Добавить", "✏️ Редактировать", "🗑️ Удалить"], "🔙 Назад")
 
-# ==================== FSM States ====================
-
-class EventStates(StatesGroup):
-    """Состояния для работы с событиями."""
-    menu = State()              # Главное меню управления событиями
-    selecting_item = State()    # Выбор события для редактирования/удаления
-    input_type = State()        # Ввод типа события
-    input_datetime = State()    # Ввод даты/времени
-    input_link = State()        # Ввод ссылки
-    input_announcement = State()  # Ввод анонса
-    confirm_announce = State()  # Подтверждение размещения анонса
-    editing = State()           # Редактирование события
-
-
-# ==================== Keyboards ====================
-
-events_menu_kb = kb(
-    ["📖 Просмотреть", "➕ Добавить", "✏️ Редактировать", "🗑️ Удалить"],
-    "🔙 Назад"
-)
-
-
-# ==================== Helper Functions ====================
 
 def format_event(ev: dict) -> str:
-    """Форматирование события для отображения."""
     status = "✅" if ev['datetime'] > datetime.now().isoformat() else "⏰"
     link = f"[🔗]({ev['link']})" if ev['link'] else ""
     return f"{status} *ID:{ev['id']}* {escape_md(ev['type'])} ({ev['datetime'][:10]}) {link}"
 
 
-# ==================== Admin: Menu ====================
-
-@router.message(F.text == "📋 Управление событиями", HasRole(min_priority=MODULE_ACCESS["events"]))
-async def events_menu(message: Message, state: FSMContext):
-    """Главное меню управления событиями."""
-    # Блокируем вызов через reply на чужое сообщение
-    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
-        await message.answer("❌ Нет прав.")
+async def events_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    auth = await require_any_role(update, context, MODULE_ACCESS["events_crud"])
+    if not auth:
         return
-    ok, wait = check_rate_limit(message.from_user.id)
+    if update.message.reply_to_message and update.message.reply_to_message.from_user.id != update.effective_user.id:
+        await update.message.reply_text("❌ Нет прав.")
+        return
+    ok, wait = check_rate_limit(update.effective_user.id)
     if not ok:
-        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        await update.message.reply_text(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
-    await state.set_state(EventStates.menu)
-    pass
-    await message.answer("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
+    await set_user_state(context, STATE_EVENTS_MENU)
+    await update.message.reply_text("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
 
 
-# ==================== Admin: View ====================
-
-@router.message(F.text == "📖 Просмотреть", EventStates.menu, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def events_show_all(message: Message, state: FSMContext):
-    """Показать все события."""
-    # Блокируем вызов через reply на чужое сообщение
-    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
-        await message.answer("❌ Нет прав.")
+async def events_show_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_MENU:
+        return
+    if update.message.reply_to_message and update.message.reply_to_message.from_user.id != update.effective_user.id:
+        await update.message.reply_text("❌ Нет прав.")
         return
     events = await get_events()
     if not events:
         text = "📭 Нет событий"
     else:
         text = "📅 *Все события:*\n\n" + "\n\n".join(format_event(e) for e in events)
-    await message.answer(text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=events_menu_kb)
+    await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=events_menu_kb)
 
 
-# ==================== Admin: Create ====================
-
-@router.message(F.text == "➕ Добавить", EventStates.menu, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_add_start(message: Message, state: FSMContext):
-    """Начало добавления события."""
-    # Блокируем вызов через reply на чужое сообщение
-    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
-        await message.answer("❌ Нет прав.")
+async def event_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_MENU:
         return
-    await state.set_state(EventStates.input_type)
-    await message.answer("Введите тип (Вебинар, Митап, Квиз):", reply_markup=back_kb)
+    if update.message.reply_to_message and update.message.reply_to_message.from_user.id != update.effective_user.id:
+        await update.message.reply_text("❌ Нет прав.")
+        return
+    await set_user_state(context, STATE_EVENTS_INPUT_TYPE)
+    await update.message.reply_text("Введите тип (Вебинар, Митап, Квиз):", reply_markup=back_kb)
 
 
-@router.message(EventStates.input_type, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_add_type(message: Message, state: FSMContext):
-    """Получение типа события."""
-    if not message.text:
+async def event_add_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_INPUT_TYPE:
         return
-    if len(message.text) > 100:
-        await message.answer("❌ Тип события слишком длинный (макс 100 символов)")
+    if not update.message.text:
         return
-    
-    await state.update_data(event_type=message.text)
-    await state.set_state(EventStates.input_datetime)
-    await message.answer(
+    if len(update.message.text) > 100:
+        await update.message.reply_text("❌ Тип события слишком длинный (макс 100 символов)")
+        return
+    context.user_data["event_type"] = update.message.text
+    await set_user_state(context, STATE_EVENTS_INPUT_DATETIME)
+    await update.message.reply_text(
         "📅 *Введите дату и время*\n\n"
         "Поддерживаемые форматы:\n"
         "• `2024-12-31 18:00:00` — ISO формат\n"
@@ -122,139 +90,114 @@ async def event_add_type(message: Message, state: FSMContext):
     )
 
 
-@router.message(EventStates.input_datetime, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_add_datetime(message: Message, state: FSMContext):
-    """Получение даты события."""
-    if not message.text:
+async def event_add_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_INPUT_DATETIME:
         return
-    
-    # Используем гибкий парсинг даты
-    dt_iso, error = parse_datetime_flexible(message.text)
-    
+    if not update.message.text:
+        return
+    dt_iso, error = parse_datetime_flexible(update.message.text)
     if error:
-        await message.answer(error, parse_mode="Markdown")
+        await update.message.reply_text(error, parse_mode="Markdown")
         return
-    
-    await state.update_data(event_datetime=dt_iso)
-    await state.set_state(EventStates.input_link)
-    await message.answer("Введите ссылку (или 'нет'):", reply_markup=back_kb)
+    context.user_data["event_datetime"] = dt_iso
+    await set_user_state(context, STATE_EVENTS_INPUT_LINK)
+    await update.message.reply_text("Введите ссылку (или 'нет'):", reply_markup=back_kb)
 
 
-@router.message(EventStates.input_link, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_add_link(message: Message, state: FSMContext):
-    """Получение ссылки на событие."""
-    if not message.text:
+async def event_add_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_INPUT_LINK:
         return
-    link = message.text.strip()
+    if not update.message.text:
+        return
+    link = update.message.text.strip()
     if link.lower() == "нет":
         link = ""
     elif not (link.startswith('http://') or link.startswith('https://')):
-        await message.answer("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
+        await update.message.reply_text("❌ Некорректная ссылка. Используйте формат: https://example.com/page")
         return
-    await state.update_data(event_link=link)
-    await state.set_state(EventStates.input_announcement)
-    await message.answer("Введите анонс:", reply_markup=back_kb)
+    context.user_data["event_link"] = link
+    await set_user_state(context, STATE_EVENTS_INPUT_ANNOUNCEMENT)
+    await update.message.reply_text("Введите анонс:", reply_markup=back_kb)
 
 
-@router.message(EventStates.input_announcement, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_add_announcement(message: Message, state: FSMContext):
-    """Получение анонса и подготовка к сохранению."""
-    if not message.text:
+async def event_add_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_INPUT_ANNOUNCEMENT:
         return
-    ann = message.text.strip()
+    if not update.message.text:
+        return
+    ann = update.message.text.strip()
     if len(ann) > 2000:
-        await message.answer("❌ Анонс слишком длинный (макс 2000 символов)")
+        await update.message.reply_text("❌ Анонс слишком длинный (макс 2000 символов)")
         return
-    
-    data = await state.get_data()
+    data = context.user_data
     event_type = data.get('event_type')
     event_datetime = data.get('event_datetime')
-    event_link = data.get('event_link')
-    
     if not all([event_type, event_datetime]):
-        await state.clear()
-        await message.answer(
+        await clear_user_state(context)
+        await update.message.reply_text(
             "⚠️ Сессия истекла. Начните сначала.",
-            reply_markup=await get_main_keyboard(message.from_user.id)
+            reply_markup=await get_main_keyboard(update.effective_user.id)
         )
         return
-    
-    await state.update_data(event_announcement=ann)
-    
-    # Если не настроена группа для анонсов - сразу сохраняем
+    context.user_data["event_announcement"] = ann
     if not ANNOUNCEMENT_GROUP_ID:
         try:
-            await add_event(event_type, event_datetime, event_link, ann)
-            await message.answer("✅ Событие добавлено!")
+            await add_event(event_type, event_datetime, data.get('event_link'), ann)
+            await update.message.reply_text("✅ Событие добавлено!")
         except Exception as e:
             logging.error(e)
-            await message.answer("❌ Ошибка сохранения")
-        await events_menu(message, state)
+            await update.message.reply_text("❌ Ошибка сохранения")
+        await events_menu(update, context)
         return
-    
-    # Спрашиваем про размещение анонса
-    await state.set_state(EventStates.confirm_announce)
+    await set_user_state(context, STATE_EVENTS_CONFIRM_ANNOUNCE)
     preview = (
         f"📅 *{event_type}*\n"
         f"🕐 {event_datetime}\n"
-        f"🔗 {event_link or '—'}\n\n"
+        f"🔗 {data.get('event_link') or '—'}\n\n"
         f"{ann[:500]}{'...' if len(ann) > 500 else ''}"
     )
-    await message.answer(
+    await update.message.reply_text(
         f"{preview}\n\n📢 Разместить анонс в группе?",
         parse_mode="Markdown",
         reply_markup=kb(["✅ Да", "❌ Нет", "🏠 Главное меню"])
     )
 
 
-@router.message(EventStates.confirm_announce, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_confirm_announce(message: Message, state: FSMContext, bot: Bot):
-    """Подтверждение размещения анонса в группе."""
-    if not message.text:
+async def event_confirm_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_CONFIRM_ANNOUNCE:
         return
-    
-    data = await state.get_data()
+    if not update.message.text:
+        return
+    data = context.user_data
     event_type = data.get('event_type')
     event_datetime = data.get('event_datetime')
     event_link = data.get('event_link')
     event_announcement = data.get('event_announcement')
-    
     if not all([event_type, event_datetime, event_announcement]):
-        await state.clear()
-        await message.answer(
+        await clear_user_state(context)
+        await update.message.reply_text(
             "⚠️ Сессия истекла. Начните сначала.",
-            reply_markup=await get_main_keyboard(message.from_user.id)
+            reply_markup=await get_main_keyboard(update.effective_user.id)
         )
         return
-    
-    # Сохраняем событие в БД
     try:
         await add_event(event_type, event_datetime, event_link, event_announcement)
-        await message.answer("✅ Событие добавлено!")
+        await update.message.reply_text("✅ Событие добавлено!")
     except Exception as e:
         logging.error(e)
-        await message.answer("❌ Ошибка сохранения")
-        await events_menu(message, state)
+        await update.message.reply_text("❌ Ошибка сохранения")
+        await events_menu(update, context)
         return
-    
-    # Если выбрано "Да" - постим в группу (проверяем без эмодзи)
-    if message.text and "Да" in message.text and "Нет" not in message.text and ANNOUNCEMENT_GROUP_ID:
+    if update.message.text and "Да" in update.message.text and "Нет" not in update.message.text and ANNOUNCEMENT_GROUP_ID:
         try:
-            group_text = (
-                f"📅 *{event_type}*\n"
-                f"🕐 {event_datetime}\n"
-            )
+            group_text = f"📅 *{event_type}*\n🕐 {event_datetime}\n"
             if event_link:
                 group_text += f"🔗 [Ссылка на событие]({event_link})\n"
             group_text += f"\n{event_announcement}"
-            
-            rsvp_kb = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✅ Иду", callback_data="noop"),
-                    InlineKeyboardButton(text="❌ Не иду", callback_data="noop")
-                ]
+            rsvp_kb = inline_kb([
+                [InlineKeyboardButton(text="✅ Иду", callback_data="noop"),
+                 InlineKeyboardButton(text="❌ Не иду", callback_data="noop")]
             ])
-            
             kwargs = {
                 "chat_id": ANNOUNCEMENT_GROUP_ID,
                 "text": group_text,
@@ -263,86 +206,76 @@ async def event_confirm_announce(message: Message, state: FSMContext, bot: Bot):
             }
             if ANNOUNCEMENT_TOPIC_ID:
                 kwargs["message_thread_id"] = ANNOUNCEMENT_TOPIC_ID
-            
-            await bot.send_message(**kwargs)
-            await message.answer("📢 Анонс размещён в группе!")
+            await context.bot.send_message(**kwargs)
+            await update.message.reply_text("📢 Анонс размещён в группе!")
         except Exception as e:
             logging.error(f"Ошибка отправки в группу: {e}")
-            await message.answer("⚠️ Событие сохранено, но не удалось разместить анонс в группе.")
-    
-    await events_menu(message, state)
+            await update.message.reply_text("⚠️ Событие сохранено, но не удалось разместить анонс в группе.")
+    await events_menu(update, context)
 
 
-# ==================== Admin: Update ====================
-
-@router.message(F.text == "✏️ Редактировать", EventStates.menu, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_edit_select(message: Message, state: FSMContext):
-    """Выбор события для редактирования."""
-    # Блокируем вызов через reply на чужое сообщение
-    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
-        await message.answer("❌ Нет прав.")
+async def event_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_MENU:
+        return
+    if update.message.reply_to_message and update.message.reply_to_message.from_user.id != update.effective_user.id:
+        await update.message.reply_text("❌ Нет прав.")
         return
     events = await get_events()
     if not events:
-        await message.answer("📭 *Нет событий*\n\n💡 Скоро будут новые мероприятия!", parse_mode="Markdown", reply_markup=events_menu_kb)
+        await update.message.reply_text("📭 *Нет событий*\n\n💡 Скоро будут новые мероприятия!", parse_mode="Markdown", reply_markup=events_menu_kb)
         return
-    await state.set_state(EventStates.selecting_item)
+    await set_user_state(context, STATE_EVENTS_SELECTING_ITEM)
     kb_inline = inline_kb([
         [InlineKeyboardButton(
             text=f"✏️ {e['id']}. {e['type'][:20]} ({e['datetime'][:10]})",
             callback_data=f"edit_ev:{e['id']}"
         )] for e in events
     ])
-    await message.answer("Выберите событие:", reply_markup=kb_inline)
+    await update.message.reply_text("Выберите событие:", reply_markup=kb_inline)
 
 
-@router.callback_query(F.data.startswith("edit_ev:"), HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_edit_callback(callback: CallbackQuery, state: FSMContext):
-    """Callback для выбора события на редактирование."""
-    await callback.answer()
-    try:
-        ev_id = int(callback.data.split(":")[1])
-    except (ValueError, IndexError):
-        await safe_edit_text(callback, "❌ Некорректные данные")
+async def event_edit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if get_user_state(context) != STATE_EVENTS_SELECTING_ITEM:
+        await query.edit_message_text("❌ Сессия устарела")
         return
-    
+    try:
+        ev_id = int(query.data.split(":")[1])
+    except (ValueError, IndexError):
+        await query.edit_message_text("❌ Некорректные данные")
+        return
     events = await get_events()
     ev = next((e for e in events if e['id'] == ev_id), None)
     if not ev:
-        await safe_edit_text(callback, "❌ Не найдено")
+        await query.edit_message_text("❌ Не найдено")
         return
-    
-    # Сохраняем историю для навигации назад
-    await state.update_data(edit_id=ev_id, edit_ev=ev)
-    await state.set_state(EventStates.editing)
-    await safe_edit_text(
-        callback,
+    context.user_data["edit_id"] = ev_id
+    context.user_data["edit_ev"] = ev
+    await set_user_state(context, STATE_EVENTS_EDITING)
+    await query.edit_message_text(
         f"✏️ Редактирование события *{ev_id}*\n\n"
-        f"Отправьте: `тип\\n\\nдата\\n\\nссылка\\n\\nописание`\n\n"
+        f"Отправьте: `тип\n\nдата\n\nссылка\n\nописание`\n\n"
         f"(используйте '.' для пропуска)",
         parse_mode="Markdown"
     )
 
 
-@router.message(EventStates.editing, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_edit_process(message: Message, state: FSMContext):
-    """Обработка редактирования события."""
-    if not message.text:
+async def event_edit_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_EDITING:
         return
-    
-    data = await state.get_data()
-    ev_id = data.get('edit_id')
+    if not update.message.text:
+        return
+    ev_id = context.user_data.get('edit_id')
     if not ev_id:
-        await state.clear()
-        await message.answer(
+        await clear_user_state(context)
+        await update.message.reply_text(
             "⚠️ Сессия истекла. Начните сначала.",
-            reply_markup=await get_main_keyboard(message.from_user.id)
+            reply_markup=await get_main_keyboard(update.effective_user.id)
         )
         return
-    
-    parts = [p.strip() for p in message.text.split('\n\n') if p.strip()]
+    parts = [p.strip() for p in update.message.text.split('\n\n') if p.strip()]
     updates = {}
-    
     if parts and parts[0] != '.':
         updates['event_type'] = parts[0]
     if len(parts) > 1 and parts[1] != '.':
@@ -350,126 +283,117 @@ async def event_edit_process(message: Message, state: FSMContext):
             datetime.fromisoformat(parts[1])
             updates['event_datetime'] = parts[1]
         except ValueError:
-            await message.answer("❌ Неверный формат даты")
+            await update.message.reply_text("❌ Неверный формат даты")
             return
     if len(parts) > 2 and parts[2] != '.':
         updates['link'] = "" if parts[2].lower() == "нет" else parts[2]
     if len(parts) > 3 and parts[3] != '.':
         updates['announcement'] = parts[3]
-    
     if updates:
         await update_event(ev_id, **updates)
-        await message.answer("✅ Обновлено!")
+        await update.message.reply_text("✅ Обновлено!")
     else:
-        await message.answer("❌ Ничего не изменено")
-    
-    await events_menu(message, state)
+        await update.message.reply_text("❌ Ничего не изменено")
+    await events_menu(update, context)
 
 
-# ==================== Admin: Delete ====================
-
-@router.message(F.text == "🗑️ Удалить", EventStates.menu, HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_delete_select(message: Message, state: FSMContext):
-    """Выбор события для удаления."""
-    # Блокируем вызов через reply на чужое сообщение
-    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
-        await message.answer("❌ Нет прав.")
+async def event_delete_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_EVENTS_MENU:
+        return
+    if update.message.reply_to_message and update.message.reply_to_message.from_user.id != update.effective_user.id:
+        await update.message.reply_text("❌ Нет прав.")
         return
     events = await get_events()
     if not events:
-        await message.answer("📭 Нет событий", reply_markup=events_menu_kb)
+        await update.message.reply_text("📭 Нет событий", reply_markup=events_menu_kb)
         return
-    await state.set_state(EventStates.selecting_item)
+    await set_user_state(context, STATE_EVENTS_SELECTING_ITEM)
     kb_inline = inline_kb([
         [InlineKeyboardButton(
             text=f"🗑️ {e['id']}. {e['type'][:20]}",
             callback_data=f"del_ev:{e['id']}"
         )] for e in events
     ])
-    await message.answer("Выберите для удаления:", reply_markup=kb_inline)
+    await update.message.reply_text("Выберите для удаления:", reply_markup=kb_inline)
 
 
-@router.callback_query(F.data.startswith("del_ev:"), HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_delete_confirm(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение удаления события."""
-    await callback.answer()
-    try:
-        ev_id = int(callback.data.split(":")[1])
-    except (ValueError, IndexError):
-        await safe_edit_text(callback, "❌ Некорректные данные")
+async def event_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if get_user_state(context) != STATE_EVENTS_SELECTING_ITEM:
+        await query.edit_message_text("❌ Сессия устарела")
         return
-    
+    try:
+        ev_id = int(query.data.split(":")[1])
+    except (ValueError, IndexError):
+        await query.edit_message_text("❌ Некорректные данные")
+        return
     events = await get_events()
     ev = next((e for e in events if e['id'] == ev_id), None)
     if not ev:
-        await safe_edit_text(callback, "❌ Событие не найдено")
+        await query.edit_message_text("❌ Событие не найдено")
         return
-    
-    # Подтверждение удаления
-    await callback.message.edit_text(
+    await query.edit_message_text(
         f"🗑️ *Удалить событие?*\n\n"
         f"📅 {ev['type']}\n"
         f"🕐 {ev['datetime'][:16]}\n\n"
         f"⚠️ Это действие нельзя отменить.",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        reply_markup=inline_kb([
             [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"conf_del_ev:{ev_id}")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_del_ev")]
         ])
     )
 
 
-@router.callback_query(F.data.startswith("conf_del_ev:"), HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_delete_execute(callback: CallbackQuery, state: FSMContext):
-    """Выполнение удаления события."""
-    await callback.answer()
+async def event_delete_execute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
     try:
-        ev_id = int(callback.data.split(":")[1])
+        ev_id = int(query.data.split(":")[1])
     except (ValueError, IndexError):
-        await safe_edit_text(callback, "❌ Некорректные данные")
+        await query.edit_message_text("❌ Некорректные данные")
         return
-    
     if await delete_event(ev_id):
-        await safe_edit_text(callback, f"✅ Событие {ev_id} удалено")
+        await query.edit_message_text(f"✅ Событие {ev_id} удалено")
     else:
-        await safe_edit_text(callback, "❌ Ошибка")
-    
-    # Возвращаемся в меню управления событиями
-    await state.set_state(EventStates.menu)
-    await callback.message.answer("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
+        await query.edit_message_text("❌ Ошибка")
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📋 *Управление событиями*",
+        parse_mode="Markdown",
+        reply_markup=events_menu_kb
+    )
+    await set_user_state(context, STATE_EVENTS_MENU)
 
 
-@router.callback_query(F.data == "cancel_del_ev", HasRole(min_priority=MODULE_ACCESS["events"]))
-async def event_delete_cancel(callback: CallbackQuery, state: FSMContext):
-    """Отмена удаления события."""
-    await callback.answer("❌ Удаление отменено")
-    await callback.message.edit_text("❌ Удаление отменено")
-    
-    # Возвращаемся в меню управления событиями
-    await state.set_state(EventStates.menu)
-    await callback.message.answer("📋 *Управление событиями*", parse_mode="Markdown", reply_markup=events_menu_kb)
+async def event_delete_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("❌ Удаление отменено")
+    await query.edit_message_text("❌ Удаление отменено")
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📋 *Управление событиями*",
+        parse_mode="Markdown",
+        reply_markup=events_menu_kb
+    )
+    await set_user_state(context, STATE_EVENTS_MENU)
 
 
-# ==================== Public: View ====================
+# ==================== Public ====================
 
-@router.message(F.text.in_(["📅 События комьюнити", "События комьюнити"]))
-async def public_events_show(message: Message):
-    """Публичный просмотр предстоящих событий."""
-    ok, wait = check_rate_limit(message.from_user.id)
+async def public_events_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ok, wait = check_rate_limit(update.effective_user.id)
     if not ok:
-        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        await update.message.reply_text(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
-    
-    # Показываем typing пока загружаем события
-    await message.chat.do("typing")
-    
+    await update.effective_chat.send_action(action="typing")
     events = await get_events(upcoming_only=True)
     if not events:
-        await message.answer("📭 Нет предстоящих событий")
+        await update.message.reply_text("📭 Нет предстоящих событий")
         return
-    
     text = "📅 *Предстоящие события:*\n\n" + "\n\n".join(
         f"*{e['type']}* ({e['datetime'][:10]})\n{e['announcement'][:100]}..."
         for e in events
     )
-    await message.answer(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="Markdown")

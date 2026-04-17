@@ -1,53 +1,30 @@
 """
 Модуль записи на мок-интервью.
-
-Включает:
-- Меню выбора ментора (динамически из конфига)
-- Ссылки на календари для записи
 """
-from aiogram import Router, F
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import ContextTypes
 
 from config import MOCK_MENTORS
 from utils import check_rate_limit, user_kb
 
-router = Router(name="mocks")
-
-
-# ==================== Keyboards ====================
 
 def build_mock_kb() -> ReplyKeyboardMarkup:
-    """Создать клавиатуру менторов из конфига."""
     keyboard = []
     for mentor_name, mentor_data in MOCK_MENTORS.items():
         emoji = mentor_data.get("emoji", "👤")
         keyboard.append([KeyboardButton(text=f"{emoji} {mentor_name}")])
     keyboard.append([KeyboardButton(text="🔙 Назад")])
-    
-    return ReplyKeyboardMarkup(
-        keyboard=keyboard,
-        resize_keyboard=True
-    )
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
-# ==================== Handlers ====================
-
-@router.message(F.text.in_(["⏱️ Записаться на мок", "Записаться на мок"]))
-async def booking_handler(message: Message):
-    """Обработчик записи на мок."""
-    ok, wait = check_rate_limit(message.from_user.id)
+async def booking_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ok, wait = check_rate_limit(update.effective_user.id)
     if not ok:
-        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        await update.message.reply_text(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
-    
-    # Формируем список доступных менторов
-    available_mentors = [
-        name for name, data in MOCK_MENTORS.items() 
-        if data.get("available")
-    ]
+    available_mentors = [name for name, data in MOCK_MENTORS.items() if data.get("available")]
     available_text = ", ".join(available_mentors) if available_mentors else "пока нет"
-    
-    await message.answer(
+    await update.message.reply_text(
         "📋 *Запись на мок*\n\n"
         "У нас проводится 2-4 мока\n\n"
         "⚠️ *Моки необходимо проходить после составления легенды!*\n\n"
@@ -59,54 +36,39 @@ async def booking_handler(message: Message):
         "2️⃣ Скинуть резюме собеседующему\n\n"
         "_Если очередь на мок больше 3 дней — напишите в ЛС администратору._",
         parse_mode="Markdown",
-        reply_markup=(build_mock_kb() if message.chat.type == "private" else None)
+        reply_markup=(build_mock_kb() if update.effective_chat.type == "private" else None)
     )
 
 
-@router.message(F.text)
-async def mock_select_handler(message: Message):
-    """Обработчик выбора ментора для мока.
-    
-    Проверяет что текст заканчивается на имя ментора из MOCK_MENTORS.
-    Работает независимо от эмодзи в начале строки.
-    """
-    ok, wait = check_rate_limit(message.from_user.id)
+async def mock_select_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ok, wait = check_rate_limit(update.effective_user.id)
     if not ok:
-        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        await update.message.reply_text(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
-    
-    # Ищем имя ментора в конце строки (после эмодзи/префикса)
-    text = message.text
+    text = update.message.text
     mentor = None
     for name in MOCK_MENTORS.keys():
         if text.endswith(name):
             mentor = name
             break
-    
     if not mentor:
-        return  # Не наше сообщение — пропускаем
-    
-    if mentor not in MOCK_MENTORS:
-        await message.answer("❌ Ментор не найден")
         return
-    
     mentor_data = MOCK_MENTORS[mentor]
     cal_link = mentor_data.get("cal_link")
     available = mentor_data.get("available", False)
-    
     if available and cal_link:
-        await message.answer(
+        await update.message.reply_text(
             f"👤 *{mentor}*\n\n"
             f"[Записаться на мок]({cal_link})\n\n"
             f"Нажмите на ссылку для выбора удобного времени.",
             parse_mode="Markdown",
-            reply_markup=(user_kb if message.chat.type == "private" else None)
+            reply_markup=(user_kb if update.effective_chat.type == "private" else None)
         )
     else:
-        await message.answer(
+        await update.message.reply_text(
             f"👤 *{mentor}*\n\n"
             f"_Запись пока недоступна_\n\n"
             f"Выберите другого ментора или попробуйте позже.",
             parse_mode="Markdown",
-            reply_markup=(build_mock_kb() if message.chat.type == "private" else None)
+            reply_markup=(build_mock_kb() if update.effective_chat.type == "private" else None)
         )

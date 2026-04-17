@@ -1,91 +1,58 @@
 """
 Модуль управления ролями пользователей.
-
-Включает:
-- Просмотр списка пользователей с пагинацией
-- Назначение ролей (batch)
-- Удаление пользователей
 """
 import logging
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.context import FSMContext
+from telegram import Update, InlineKeyboardButton
+from telegram.ext import ContextTypes
 
-from config import MODULE_ACCESS, ROLES
-from db_utils import get_all_users, set_users_batch, delete_user, HasRole, get_user_by_id, get_user_by_username
-from utils import (
-    check_rate_limit, kb, inline_kb, back_kb,
-    get_role_emoji, format_user, parse_users_input, escape_md
-)
+from config import MODULE_ACCESS, ROLES, ROLE_BUNDLES
+from db_utils import require_any_role, get_all_users, set_users_batch, delete_user, get_user_by_id, get_user_by_username, add_or_update_user, set_user_roles
+from utils import check_rate_limit, kb, inline_kb, back_kb, get_role_emoji, format_user, parse_users_input, escape_md
+from handlers.conversation_utils import get_user_state, set_user_state, clear_user_state
 
-router = Router(name="roles")
+STATE_ROLES_MENU = "roles_menu"
+STATE_ROLES_INPUT_USERS = "roles_input_users"
+STATE_ROLES_SELECTING_ROLE = "roles_selecting_role"
+STATE_ROLES_SELECTING_USER_TO_DELETE = "roles_selecting_user_to_delete"
 
-
-# ==================== FSM States ====================
-
-class RoleStates(StatesGroup):
-    """Состояния для управления ролями."""
-    menu = State()              # Главное меню
-    input_users = State()       # Ввод списка пользователей
-    selecting_role = State()    # Выбор роли для назначения
-    selecting_user_to_delete = State()  # Выбор пользователя для удаления
+roles_menu_kb = kb(["📋 Список пользователей", "➕ Назначить роль", "🗑️ Удалить пользователя"], "🔙 Назад")
+USERS_PER_PAGE = 25
 
 
-# ==================== Constants ====================
-
-USERS_PER_PAGE = 25  # Пагинация для списка пользователей
-
-
-# ==================== Keyboards ====================
-
-roles_menu_kb = kb(
-    ["📋 Список пользователей", "➕ Назначить роль", "🗑️ Удалить пользователя"],
-    "🔙 Назад"
-)
-
-
-def role_kb(prefix: str) -> InlineKeyboardMarkup:
-    """Клавиатура выбора роли."""
+def role_kb(prefix: str):
     return inline_kb([
         [InlineKeyboardButton(text="👤 User", callback_data=f"{prefix}:user")],
         [InlineKeyboardButton(text="🎓 Mentor", callback_data=f"{prefix}:mentor")],
+        [InlineKeyboardButton(text="📋 Manager (набор)", callback_data=f"{prefix}:manager")],
+        [InlineKeyboardButton(text="📊 Analyst", callback_data=f"{prefix}:analyst")],
         [InlineKeyboardButton(text="👑 Admin", callback_data=f"{prefix}:admin")],
-        [InlineKeyboardButton(text="🦁 Lion (Meta-Admin)", callback_data=f"{prefix}:lion")],
     ])
 
 
-def build_users_pagination_keyboard(page: int, total_pages: int) -> InlineKeyboardMarkup:
-    """Создать клавиатуру пагинации для списка пользователей."""
+def build_users_pagination_keyboard(page: int, total_pages: int):
     buttons = []
-    
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"users_page:{page-1}"))
     nav_row.append(InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
         nav_row.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=f"users_page:{page+1}"))
-    
     buttons.append(nav_row)
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return inline_kb(buttons)
 
 
-# ==================== Menu ====================
-
-@router.message(F.text == "👥 Управление ролями", HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def roles_menu(message: Message, state: FSMContext):
-    """Главное меню управления ролями."""
-    # Блокируем вызов через reply на чужое сообщение
-    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
-        await message.answer("❌ Нет прав.")
+async def roles_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    auth = await require_any_role(update, context, MODULE_ACCESS["roles_crud"])
+    if not auth:
         return
-    ok, wait = check_rate_limit(message.from_user.id)
+    if update.message.reply_to_message and update.message.reply_to_message.from_user.id != update.effective_user.id:
+        await update.message.reply_text("❌ Нет прав.")
+        return
+    ok, wait = check_rate_limit(update.effective_user.id)
     if not ok:
-        await message.answer(f"⏱️ Слишком быстро! Подождите {wait} сек.")
+        await update.message.reply_text(f"⏱️ Слишком быстро! Подождите {wait} сек.")
         return
-    
-    await state.set_state(RoleStates.menu)
-    pass
+    await set_user_state(context, STATE_ROLES_MENU)
     text = (
         "👥 *Управление ролями пользователей*\n\n"
         "📋 *Список* — просмотр всех пользователей\n"
@@ -94,37 +61,24 @@ async def roles_menu(message: Message, state: FSMContext):
         "   • Только ID: `123456789`\n"
         "   • Только @username: `@ivan`\n"
         "   • Оба значения: `123456789 @ivan`\n"
+        "   • Несколько: `@ivan, @petr, 123456789`\n\n"
         "🗑️ *Удалить* — удалить пользователя"
     )
-    await message.answer(text, parse_mode="Markdown", reply_markup=roles_menu_kb)
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=roles_menu_kb)
 
 
-# ==================== View Users ====================
-
-async def _show_users_page(
-    message_or_callback, 
-    users: list, 
-    page: int, 
-    total_pages: int, 
-    total_users: int, 
-    is_callback: bool = False
-):
-    """Отобразить страницу со списком пользователей."""
+async def _show_users_page(message_or_callback, users: list, page: int, total_pages: int, total_users: int, is_callback: bool = False):
     start_idx = page * USERS_PER_PAGE
     end_idx = min(start_idx + USERS_PER_PAGE, len(users))
     page_users = users[start_idx:end_idx]
-    
-    # Группируем по ролям для отображения
     by_role = {r: [] for r in ROLES}
     for u in page_users:
-        role = u.get('role') or 'user'  # Если нет роли, считаем user
+        role = u.get('role') or 'user'
         if role in by_role:
             by_role[role].append(u)
         else:
-            by_role['user'].append(u)  # На всякий случай
-    
+            by_role['user'].append(u)
     lines = [f"👥 *Всего пользователей: {total_users}* (стр. {page+1}/{total_pages})\n"]
-    
     for role in ROLES:
         emoji = get_role_emoji(role)
         role_users = by_role[role]
@@ -134,10 +88,8 @@ async def _show_users_page(
                 lines.append(f"  {format_user(u)}")
         else:
             lines.append("  _нет_")
-    
     keyboard = build_users_pagination_keyboard(page, total_pages)
     text = "\n".join(lines)
-    
     if is_callback:
         try:
             await message_or_callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
@@ -145,78 +97,61 @@ async def _show_users_page(
             pass
         await message_or_callback.answer()
     else:
-        await message_or_callback.answer(text, parse_mode="Markdown", reply_markup=keyboard)
+        await message_or_callback.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
-@router.message(F.text == "📋 Список пользователей", RoleStates.menu, HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def roles_show(message: Message, state: FSMContext):
-    """Показать список всех пользователей (с пагинацией)."""
-    # Блокируем вызов через reply на чужое сообщение
-    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
-        await message.answer("❌ Нет прав.")
+async def roles_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_ROLES_MENU:
         return
-    
-    # Показываем typing пока загружаем пользователей
-    await message.chat.do("typing")
-    
+    if update.message.reply_to_message and update.message.reply_to_message.from_user.id != update.effective_user.id:
+        await update.message.reply_text("❌ Нет прав.")
+        return
+    await update.effective_chat.send_action(action="typing")
     users = await get_all_users()
     if not users:
-        await message.answer("📭 Пользователей нет")
-        await roles_menu(message, state)
+        await update.message.reply_text("📭 Пользователей нет")
+        await roles_menu(update, context)
         return
-    
-    # Группируем по ролям
     by_role = {r: [] for r in ROLES}
     for u in users:
         by_role[u['role']].append(u)
-    
-    # Плоский список для пагинации
     all_users_flat = []
     for role in ROLES:
         for u in by_role[role]:
             all_users_flat.append(u)
-    
     total_users = len(all_users_flat)
     total_pages = (total_users + USERS_PER_PAGE - 1) // USERS_PER_PAGE
-    
-    await _show_users_page(message, all_users_flat, 0, total_pages, total_users, is_callback=False)
-    await roles_menu(message, state)
+    await _show_users_page(update, all_users_flat, 0, total_pages, total_users, is_callback=False)
+    await roles_menu(update, context)
 
 
-@router.callback_query(F.data.startswith("users_page:"), HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def users_page_callback(callback: CallbackQuery):
-    """Callback для переключения страниц списка пользователей."""
-    page = int(callback.data.split(":")[1])
-    
+async def users_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    try:
+        page = int(query.data.split(":")[1])
+    except (ValueError, IndexError):
+        return
     users = await get_all_users()
-    
-    # Группируем по ролям
     by_role = {r: [] for r in ROLES}
     for u in users:
         by_role[u['role']].append(u)
-    
     all_users_flat = []
     for role in ROLES:
         for u in by_role[role]:
             all_users_flat.append(u)
-    
     total_users = len(all_users_flat)
     total_pages = (total_users + USERS_PER_PAGE - 1) // USERS_PER_PAGE
-    
-    await _show_users_page(callback, all_users_flat, page, total_pages, total_users, is_callback=True)
+    await _show_users_page(query, all_users_flat, page, total_pages, total_users, is_callback=True)
 
 
-# ==================== Assign Role ====================
-
-@router.message(F.text == "➕ Назначить роль", RoleStates.menu, HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def role_add_start(message: Message, state: FSMContext):
-    """Начало добавления/изменения роли."""
-    # Блокируем вызов через reply на чужое сообщение
-    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
-        await message.answer("❌ Нет прав.")
+async def role_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_ROLES_MENU:
         return
-    pass
-    await state.set_state(RoleStates.input_users)
+    if update.message.reply_to_message and update.message.reply_to_message.from_user.id != update.effective_user.id:
+        await update.message.reply_text("❌ Нет прав.")
+        return
+    await set_user_state(context, STATE_ROLES_INPUT_USERS)
     text = (
         "Введите пользователей для назначения роли:\n\n"
         "*Форматы:*\n"
@@ -226,25 +161,20 @@ async def role_add_start(message: Message, state: FSMContext):
         "• Несколько: `@ivan, @petr, 123456789`\n\n"
         "Бот свяжет ID и username если они указаны вместе."
     )
-    await message.answer(text, parse_mode="Markdown", reply_markup=back_kb)
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_kb)
 
 
-@router.message(RoleStates.input_users, HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def role_receive_users(message: Message, state: FSMContext):
-    """Обработка ввода пользователей."""
-    if not message.text:
+async def role_receive_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_ROLES_INPUT_USERS:
         return
-    
-    users, errors = parse_users_input(message.text)
-    
+    if not update.message.text:
+        return
+    users, errors = parse_users_input(update.message.text)
     if not users:
-        await message.answer("❌ Не найдено корректных данных. Попробуйте снова:", reply_markup=back_kb)
+        await update.message.reply_text("❌ Не найдено корректных данных. Попробуйте снова:", reply_markup=back_kb)
         return
-    
     if errors:
-        await message.answer(f"⚠️ Пропущены некорректные данные: {', '.join(errors[:5])}")
-    
-    # Показываем что распарсили
+        await update.message.reply_text(f"⚠️ Пропущены некорректные данные: {', '.join(errors[:5])}")
     preview = []
     for i, u in enumerate(users[:5], 1):
         parts = []
@@ -253,37 +183,30 @@ async def role_receive_users(message: Message, state: FSMContext):
         if u.get("username"):
             parts.append(f"@{u['username']}")
         preview.append(f"{i}. {' + '.join(parts)}")
-    
     if len(users) > 5:
         preview.append(f"... и ещё {len(users) - 5}")
-    
-    await state.update_data(users_to_assign=users)
-    await state.set_state(RoleStates.selecting_role)
-    
-    await message.answer(
+    context.user_data["users_to_assign"] = users
+    await set_user_state(context, STATE_ROLES_SELECTING_ROLE)
+    await update.message.reply_text(
         f"Найдено *{len(users)}* пользователей:\n" + "\n".join(preview) + "\n\nВыберите роль:",
         parse_mode="Markdown",
         reply_markup=role_kb("set_role")
     )
 
 
-@router.callback_query(F.data.startswith("set_role:"), HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def role_set_confirm(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение назначения роли."""
-    await callback.answer()
-    role = callback.data.split(":")[1]
-    data = await state.get_data()
-    users = data.get("users_to_assign", [])
-    
-    if not users:
-        await callback.message.edit_text("❌ Ошибка: список пуст")
-        await state.clear()
+async def role_set_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if get_user_state(context) != STATE_ROLES_SELECTING_ROLE:
+        await query.edit_message_text("❌ Сессия устарела")
         return
-    
-    # Сохраняем выбранную роль
-    await state.update_data(selected_role=role)
-    
-    # Формируем превью пользователей
+    role = query.data.split(":")[1]
+    users = context.user_data.get("users_to_assign", [])
+    if not users:
+        await query.edit_message_text("❌ Ошибка: список пуст")
+        await clear_user_state(context)
+        return
+    context.user_data["selected_role"] = role
     preview = []
     for i, u in enumerate(users[:5], 1):
         parts = []
@@ -292,15 +215,16 @@ async def role_set_confirm(callback: CallbackQuery, state: FSMContext):
         if u.get("username"):
             parts.append(f"@{u['username']}")
         preview.append(f"{i}. {' + '.join(parts)}")
-    
     if len(users) > 5:
         preview.append(f"... и ещё {len(users) - 5}")
-    
-    # Показываем подтверждение
-    role_emoji = {"user": "👤", "mentor": "🎓", "admin": "👑", "lion": "🦁"}
-    await callback.message.edit_text(
+    role_emoji = {"user": "👤", "mentor": "🎓", "manager": "📋", "analyst": "📊", "admin": "👑"}
+    bundle_label = ""
+    if role in ROLE_BUNDLES:
+        bundle_parts = ", ".join(sorted(ROLE_BUNDLES[role]))
+        bundle_label = f"\n_Набор: {bundle_parts}_"
+    await query.edit_message_text(
         f"🎯 *Назначить роль?*\n\n"
-        f"Роль: {role_emoji.get(role, '👤')} `{role}`\n"
+        f"Роль: {role_emoji.get(role, '👤')} `{role}`{bundle_label}\n"
         f"Пользователей: *{len(users)}*\n\n"
         f"Список:\n" + "\n".join(preview) + "\n\n"
         f"Подтвердите назначение:",
@@ -312,58 +236,54 @@ async def role_set_confirm(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "conf_set_role", HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def role_set_execute(callback: CallbackQuery, state: FSMContext):
-    """Выполнение назначения роли."""
-    await callback.answer()
-    
-    data = await state.get_data()
-    users = data.get("users_to_assign", [])
-    role = data.get("selected_role")
-    
-    if not users or not role:
-        await callback.message.edit_text("❌ Ошибка: данные не найдены")
-        await state.clear()
+async def role_set_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if get_user_state(context) != STATE_ROLES_SELECTING_ROLE:
+        await query.edit_message_text("❌ Сессия устарела")
         return
-    
-    await set_users_batch(users, role)
-    
-    await callback.message.edit_text(
-        f"✅ Роль `{role}` назначена для *{len(users)}* пользователей!"
-    )
-    await state.clear()
+    users = context.user_data.get("users_to_assign", [])
+    role = context.user_data.get("selected_role")
+    if not users or not role:
+        await query.edit_message_text("❌ Ошибка: данные не найдены")
+        await clear_user_state(context)
+        return
+    if role in ROLE_BUNDLES:
+        bundle_roles = list(ROLE_BUNDLES[role])
+        for user in users:
+            await add_or_update_user(user_id=user.get("user_id"), username=user.get("username"), role=None)
+            uid = user.get("user_id")
+            if uid:
+                await set_user_roles(uid, bundle_roles)
+        await query.edit_message_text(f"✅ Набор `{role}` назначен для *{len(users)}* пользователей!")
+    else:
+        await set_users_batch(users, role)
+        await query.edit_message_text(f"✅ Роль `{role}` назначена для *{len(users)}* пользователей!")
+    await clear_user_state(context)
 
 
-@router.callback_query(F.data == "cancel_set_role", HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def role_set_cancel(callback: CallbackQuery, state: FSMContext):
-    """Отмена назначения роли."""
-    await callback.answer("❌ Назначение отменено")
-    await callback.message.edit_text("❌ Назначение роли отменено")
-    await state.clear()
+async def role_set_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("❌ Назначение отменено")
+    await query.edit_message_text("❌ Назначение роли отменено")
+    await clear_user_state(context)
 
 
-# ==================== Delete User ====================
-
-@router.message(F.text == "🗑️ Удалить пользователя", RoleStates.menu, HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def role_delete_start(message: Message, state: FSMContext):
-    """Начало удаления пользователя."""
-    # Блокируем вызов через reply на чужое сообщение
-    if message.reply_to_message and message.reply_to_message.from_user.id != message.from_user.id:
-        await message.answer("❌ Нет прав.")
+async def role_delete_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if get_user_state(context) != STATE_ROLES_MENU:
+        return
+    if update.message.reply_to_message and update.message.reply_to_message.from_user.id != update.effective_user.id:
+        await update.message.reply_text("❌ Нет прав.")
         return
     users = await get_all_users()
     if not users:
-        await message.answer("📭 Нет пользователей", reply_markup=roles_menu_kb)
+        await update.message.reply_text("📭 Нет пользователей", reply_markup=roles_menu_kb)
         return
-    
-    await state.set_state(RoleStates.selecting_user_to_delete)
-    
-    # Группируем по ролям
+    await set_user_state(context, STATE_ROLES_SELECTING_USER_TO_DELETE)
     keyboard = []
     by_role = {r: [] for r in ROLES}
     for u in users:
         by_role[u['role']].append(u)
-    
     for role in ROLES:
         if by_role[role]:
             keyboard.append([InlineKeyboardButton(text=f"—— {role.upper()} ——", callback_data="noop")])
@@ -376,44 +296,35 @@ async def role_delete_start(message: Message, state: FSMContext):
                 else:
                     continue
                 keyboard.append([InlineKeyboardButton(text=user_text, callback_data=callback_data)])
-    
-    await message.answer("🗑️ Выберите пользователя для удаления:", reply_markup=inline_kb(keyboard))
+    await update.message.reply_text("🗑️ Выберите пользователя для удаления:", reply_markup=inline_kb(keyboard))
 
 
-@router.callback_query(F.data.startswith("del_user:"), HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def role_delete_confirm(callback: CallbackQuery, state: FSMContext):
-    """Подтверждение удаления пользователя."""
-    await callback.answer()
-    
-    if callback.data == "noop":
+async def role_delete_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if get_user_state(context) != STATE_ROLES_SELECTING_USER_TO_DELETE:
+        await query.edit_message_text("❌ Сессия устарела")
         return
-    
-    # Формат: del_user:id:123456789 или del_user:un:username
-    parts = callback.data.split(":")
+    if query.data == "noop":
+        return
+    parts = query.data.split(":")
     if len(parts) < 3:
-        await callback.message.edit_text("❌ Некорректные данные")
+        await query.edit_message_text("❌ Некорректные данные")
         return
-    
     key_type = parts[1]
     key_value = parts[2]
-    
-    # Получаем информацию о пользователе для отображения
     if key_type == "id":
         user = await get_user_by_id(int(key_value))
     else:
         user = await get_user_by_username(key_value)
-    
     if not user:
-        await callback.message.edit_text("❌ Пользователь не найден")
-        await state.clear()
+        await query.edit_message_text("❌ Пользователь не найден")
+        await clear_user_state(context)
         return
-    
-    # Сохраняем данные для удаления
-    await state.update_data(del_user_type=key_type, del_user_value=key_value)
-    
-    # Показываем подтверждение
+    context.user_data["del_user_type"] = key_type
+    context.user_data["del_user_value"] = key_value
     user_text = format_user(user)
-    await callback.message.edit_text(
+    await query.edit_message_text(
         f"🗑️ *Удалить пользователя?*\n\n"
         f"{user_text}\n\n"
         f"⚠️ Это действие нельзя отменить.",
@@ -425,36 +336,28 @@ async def role_delete_confirm(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "conf_del_user", HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def role_delete_execute(callback: CallbackQuery, state: FSMContext):
-    """Выполнение удаления пользователя."""
-    await callback.answer()
-    
-    data = await state.get_data()
-    key_type = data.get("del_user_type")
-    key_value = data.get("del_user_value")
-    
+async def role_delete_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    key_type = context.user_data.get("del_user_type")
+    key_value = context.user_data.get("del_user_value")
     if not key_type or not key_value:
-        await callback.message.edit_text("❌ Ошибка: данные не найдены")
-        await state.clear()
+        await query.edit_message_text("❌ Ошибка: данные не найдены")
+        await clear_user_state(context)
         return
-    
     if key_type == "id":
         success = await delete_user(user_id=int(key_value))
     else:
         success = await delete_user(username=key_value)
-    
     if success:
-        await callback.message.edit_text("✅ Пользователь удалён")
+        await query.edit_message_text("✅ Пользователь удалён")
     else:
-        await callback.message.edit_text("❌ Не удалось удалить")
-    
-    await state.clear()
+        await query.edit_message_text("❌ Не удалось удалить")
+    await clear_user_state(context)
 
 
-@router.callback_query(F.data == "cancel_del_user", HasRole(min_priority=MODULE_ACCESS["roles"]))
-async def role_delete_cancel(callback: CallbackQuery, state: FSMContext):
-    """Отмена удаления пользователя."""
-    await callback.answer("❌ Удаление отменено")
-    await callback.message.edit_text("❌ Удаление отменено")
-    await state.clear()
+async def role_delete_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("❌ Удаление отменено")
+    await query.edit_message_text("❌ Удаление отменено")
+    await clear_user_state(context)

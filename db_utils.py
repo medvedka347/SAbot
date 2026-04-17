@@ -2,10 +2,10 @@ import aiosqlite
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from aiogram.types import Message
-from aiogram.dispatcher.middlewares.base import BaseMiddleware
+from telegram import Update
+from telegram.ext import ContextTypes
 
-from config import DB_NAME, STAGES, ROLE_ADMIN, ROLE_PRIORITIES, ROLE_DISPLAY_NAMES, get_max_priority
+from config import DB_NAME, STAGES, ROLE_ADMIN, ROLE_PRIORITIES, ROLE_DISPLAY_NAMES, get_max_priority, ROLES
 
 
 class Database:
@@ -190,6 +190,20 @@ class Database:
             else:
                 logging.info("Миграция ролей v1->v2 уже выполнена, пропускаем")
             
+            # === МИГРАЦИЯ lion -> admin+manager+analyst ===
+            cursor = await db.execute(
+                "SELECT 1 FROM _migrations WHERE migration_name = 'replace_lion_with_capabilities'"
+            )
+            lion_migration_done = await cursor.fetchone()
+            if not lion_migration_done:
+                logging.warning("=== НАЧИНАЕМ МИГРАЦИЮ lion -> capabilities ===")
+                await self._migrate_lion_to_capabilities(db)
+                await db.execute(
+                    "INSERT INTO _migrations (migration_name, details) VALUES (?, ?)",
+                    ("replace_lion_with_capabilities", "Замена роли lion на admin+manager+analyst")
+                )
+                logging.warning("=== МИГРАЦИЯ lion ЗАВЕРШЕНА ===")
+            
             await db.execute("CREATE INDEX IF NOT EXISTS idx_bans_user ON bans(user_id, username)")
             
             await db.commit()
@@ -313,6 +327,40 @@ class Database:
         except Exception as e:
             logging.error(f"Критическая ошибка миграции ролей: {e}")
             raise  # Пробрасываем ошибку, чтобы остановить запуск если миграция не удалась
+    
+    async def _migrate_lion_to_capabilities(self, db: aiosqlite.Connection):
+        """Заменить роль lion на manager bundle: mentor + manager + analyst."""
+        row = await db.execute("SELECT id FROM roles WHERE role_key = 'lion'")
+        lion_row = await row.fetchone()
+        if not lion_row:
+            logging.info("Роль lion не найдена, миграция не требуется")
+            return
+        lion_role_id = lion_row[0]
+        
+        target_roles = {}
+        for rk in ['mentor', 'manager', 'analyst']:
+            row = await db.execute("SELECT id FROM roles WHERE role_key = ?", (rk,))
+            r = await row.fetchone()
+            if r:
+                target_roles[rk] = r[0]
+        
+        cursor = await db.execute(
+            "SELECT user_id FROM user_role_assignments WHERE role_id = ?", (lion_role_id,)
+        )
+        users = await cursor.fetchall()
+        
+        for (user_id,) in users:
+            for rid in target_roles.values():
+                await db.execute(
+                    "INSERT OR IGNORE INTO user_role_assignments (user_id, role_id) VALUES (?, ?)",
+                    (user_id, rid)
+                )
+            await db.execute(
+                "DELETE FROM user_role_assignments WHERE user_id = ? AND role_id = ?",
+                (user_id, lion_role_id)
+            )
+        
+        logging.info(f"Мигрировано {len(users)} пользователей с lion -> manager bundle (mentor+manager+analyst)")
     
     async def _migrate_user_roles(self, db: aiosqlite.Connection):
         """
@@ -651,7 +699,7 @@ async def get_all_users() -> list[dict]:
     rows = await db.fetchall("""
         SELECT 
             ur.id, ur.user_id, ur.username,
-            GROUP_CONCAT(r.role_key) as role_keys,
+            GROUP_CONCAT(r.role_key ORDER BY r.priority DESC) as role_keys,
             MAX(r.priority) as max_priority
         FROM user_roles ur
         LEFT JOIN user_role_assignments ura ON ur.id = ura.user_id
@@ -1036,140 +1084,67 @@ async def get_active_bans() -> list[dict]:
     ]
 
 
-# ==================== MIDDLEWARE & FILTERS ====================
+# ==================== AUTHORIZATION HELPERS ====================
 
-class AuthMiddleware(BaseMiddleware):
-    """Middleware для проверки авторизации один раз на сообщение.
-    
-    Проверяет, есть ли пользователь в БД. Если да — сохраняет роли и приоритет в data.
-    Если нет — блокирует доступ.
-    
-    Исключение: команда /start пропускается всегда (start_handler сам обрабатывает
-    неавторизованных пользователей - считает неудачные попытки и выдает баны).
-    """
-    async def __call__(self, handler, event, data):
-        # Пропускаем не-сообщения (callback_query и др.)
-        if not hasattr(event, 'from_user'):
-            return await handler(event, data)
-            
-        user_id = event.from_user.id
-        username = event.from_user.username
-        
-        # Пропускаем /start команду - start_handler сам обработает неавторизованных
-        # (включая логику неудачных попыток и банов)
-        if hasattr(event, 'text') and event.text and event.text.startswith('/start'):
-            return await handler(event, data)
-        
-        # Проверяем роли через нормализованную систему
-        user_roles = await get_user_roles(user_id=user_id, username=username)
-        
-        if not user_roles:
-            # Неавторизованный — отправляем сообщение и не пропускаем
-            try:
-                if hasattr(event, 'message') and event.message:
-                    # Для callback_query отправляем через message
-                    await event.message.answer("❌ У вас нет доступа к боту. Обратитесь к администратору.")
-                elif hasattr(event, 'answer'):
-                    # Для обычных сообщений
-                    await event.answer("❌ У вас нет доступа к боту. Обратитесь к администратору.")
-            except Exception:
-                pass  # Не можем отправить — просто молча блокируем
-            return
-        
-        # Сохраняем данные для использования в хендлерах
-        data["user_roles"] = user_roles  # Список dict с role_key, priority, etc
-        data["user_role"] = user_roles[0]['role_key'] if user_roles else None  # Для обратной совместимости
-        data["user_max_priority"] = max(r['priority'] for r in user_roles) if user_roles else 0
-        data["user_id"] = user_id
-        data["username"] = username
-        
-        return await handler(event, data)
+async def require_auth(update: Update, context: ContextTypes.DEFAULT_TYPE) -> dict | None:
+    """Проверить авторизацию пользователя. Возвращает auth-данные или None."""
+    user = update.effective_user
+    if not user:
+        return None
+    # /start пропускаем — start_handler сам обработает неавторизованных
+    if update.message and update.message.text and update.message.text.startswith('/start'):
+        return {"roles": [], "max_priority": 0, "role_keys": []}
+    roles = await get_user_roles(user_id=user.id, username=user.username)
+    if not roles:
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text("❌ У вас нет доступа к боту. Обратитесь к администратору.")
+        return None
+    return {
+        "roles": roles,
+        "role_keys": [r['role_key'] for r in roles],
+        "max_priority": max(r['priority'] for r in roles),
+    }
 
 
-class IsAuthorizedUser:
-    """Проверка авторизации по ID или username (для совместимости).
-    Теперь используется как fallback, middleware делает основную работу.
-    """
-    async def __call__(self, message: Message) -> bool:
-        # Если middleware уже проверила — пропускаем
-        # Это fallback для callback_query и других событий
-        user_id = message.from_user.id
-        username = message.from_user.username
-        
-        if await get_user_by_id(user_id):
-            return True
-        
-        if username and await get_user_by_username(username):
-            return True
-        
-        return False
+async def require_min_priority(update: Update, context: ContextTypes.DEFAULT_TYPE, min_priority: int) -> dict | None:
+    """Проверить минимальный приоритет роли. Возвращает auth-данные или None."""
+    auth = await require_auth(update, context)
+    if not auth:
+        return None
+    if auth['max_priority'] < min_priority:
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text("❌ Нет доступа.")
+        return None
+    return auth
 
 
-class HasRole:
-    """
-    Фильтр проверки роли с поддержкой приоритетов.
-    
-    Поддерживает проверку:
-    - По конкретной роли: HasRole("admin")
-    - По списку ролей: HasRole(["admin", "lion"])
-    - По минимальному приоритету: HasRole(min_priority=300)
-    """
-    def __init__(self, role: str | list[str] = None, min_priority: int = None):
-        """
-        Args:
-            role: Одна роль или список ролей
-            min_priority: Минимальный требуемый приоритет (альтернатива role)
-        """
-        if role is not None:
-            if isinstance(role, str):
-                self.roles = [role]
-            else:
-                self.roles = role
-        else:
-            self.roles = []
-        
-        self.min_priority = min_priority
-        
-        # Если указана роль без приоритета - вычисляем приоритет
-        if self.roles and min_priority is None:
-            from config import get_role_priority
-            self.min_priority = max(get_role_priority(r) for r in self.roles)
-    
-    async def __call__(self, message: Message, **data) -> bool:
-        # Проверяем кеш из middleware
-        user_roles = data.get("user_roles")  # Список dict с role_key, priority
-        user_max_priority = data.get("user_max_priority")
-        
-        # Если кеша нет - берём из БД
-        if user_roles is None:
-            user_id = message.from_user.id
-            username = message.from_user.username
-            user_roles = await get_user_roles(user_id=user_id, username=username)
-            user_max_priority = max(r['priority'] for r in user_roles) if user_roles else 0
-        
-        # Проверка по приоритету (если задан)
-        if self.min_priority is not None:
-            return user_max_priority >= self.min_priority
-        
-        # Проверка по конкретным ролям
-        user_role_keys = [r['role_key'] for r in user_roles] if user_roles else []
-        return any(role in user_role_keys for role in self.roles)
+async def require_role(update: Update, context: ContextTypes.DEFAULT_TYPE, role: str | list[str]) -> dict | None:
+    """Проверить наличие конкретной роли. Возвращает auth-данные или None."""
+    auth = await require_auth(update, context)
+    if not auth:
+        return None
+    target_roles = [role] if isinstance(role, str) else role
+    if not any(r in auth['role_keys'] for r in target_roles):
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text("❌ Нет доступа.")
+        return None
+    return auth
 
 
-class HasMinPriority:
-    """Фильтр проверки минимального приоритета."""
-    def __init__(self, min_priority: int):
-        self.min_priority = min_priority
-    
-    async def __call__(self, message: Message, **data) -> bool:
-        user_max_priority = data.get("user_max_priority")
-        
-        if user_max_priority is None:
-            user_id = message.from_user.id
-            username = message.from_user.username
-            user_max_priority = await get_user_max_priority(user_id=user_id, username=username)
-        
-        return user_max_priority >= self.min_priority
+async def require_any_role(update: Update, context: ContextTypes.DEFAULT_TYPE, roles: set[str]) -> dict | None:
+    """Проверить наличие любой из указанных ролей. Возвращает auth-данные или None."""
+    auth = await require_auth(update, context)
+    if not auth:
+        return None
+    if not any(r in auth['role_keys'] for r in roles):
+        msg = update.effective_message
+        if msg:
+            await msg.reply_text("❌ Нет доступа.")
+        return None
+    return auth
 
 
 # ==================== EVENTS ====================

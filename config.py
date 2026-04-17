@@ -7,62 +7,88 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 DB_NAME = os.getenv("DB_NAME", "user_roles.db")
 
-# --- Роли ---
+# --- Capability-роли (гранулярные) ---
 ROLE_USER = "user"
 ROLE_MENTOR = "mentor"
-ROLE_ADMIN = "admin"
-ROLE_LION = "lion"  # Мета-роль: админ + управление Buddy
-ROLES = [ROLE_USER, ROLE_MENTOR, ROLE_ADMIN, ROLE_LION]
+ROLE_MANAGER = "manager"      # capability: назначение бадди
+ROLE_ANALYST = "analyst"      # capability: аналитика
+ROLE_ADMIN = "admin"          # capability: полный доступ (founder)
+ROLES = [ROLE_USER, ROLE_MENTOR, ROLE_MANAGER, ROLE_ANALYST, ROLE_ADMIN]
+
+# --- Bundles: название -> набор capability-ролей ---
+# "manager" = бывший "лев": ментор + управление + аналитика
+ROLE_BUNDLES = {
+    "manager": {ROLE_MENTOR, ROLE_MANAGER, ROLE_ANALYST},
+}
 
 # --- Система приоритетов ролей ---
-# Приоритет: выше число = больше прав
-# Иерархия: lion (400) > admin (300) > mentor (200) > user (100)
 ROLE_PRIORITIES = {
     ROLE_USER: 100,
     ROLE_MENTOR: 200,
-    ROLE_ADMIN: 300,
-    ROLE_LION: 400,
+    ROLE_MANAGER: 300,
+    ROLE_ANALYST: 300,
+    ROLE_ADMIN: 400,
 }
 
 # Описания ролей для отображения
 ROLE_DISPLAY_NAMES = {
     ROLE_USER: "👤 Пользователь",
     ROLE_MENTOR: "🎓 Ментор",
+    ROLE_MANAGER: "📋 Менеджер",
+    ROLE_ANALYST: "📊 Аналитик",
     ROLE_ADMIN: "👑 Администратор",
-    ROLE_LION: "🦁 Лев (Meta-Admin)",
 }
 
-# Минимальные приоритеты для модулей
+# --- Capability-based доступ ---
 MODULE_ACCESS = {
-    "materials": ROLE_PRIORITIES[ROLE_ADMIN],      # CRUD материалов
-    "events": ROLE_PRIORITIES[ROLE_MENTOR],        # CRUD событий (ментор и выше)
-    "roles": ROLE_PRIORITIES[ROLE_ADMIN],          # Управление ролями
-    "bans": ROLE_PRIORITIES[ROLE_ADMIN],           # Управление банами
-    "buddy_lion": ROLE_PRIORITIES[ROLE_LION],      # Панель Льва
-    "buddy_mentor": ROLE_PRIORITIES[ROLE_MENTOR],  # Панель ментора
-    "mocks": ROLE_PRIORITIES[ROLE_USER],           # Запись на мок
-    "search": ROLE_PRIORITIES[ROLE_USER],          # Поиск материалов
+    "materials_crud": {ROLE_ADMIN, ROLE_MANAGER},
+    "materials_stats": {ROLE_ADMIN, ROLE_ANALYST, ROLE_MANAGER},
+    "events_crud": {ROLE_ADMIN, ROLE_MANAGER},
+    "roles_crud": {ROLE_ADMIN},
+    "bans_crud": {ROLE_ADMIN},
+    "buddy_mentor": {ROLE_ADMIN, ROLE_MENTOR},
+    "buddy_add": {ROLE_ADMIN, ROLE_MENTOR, ROLE_MANAGER},
+    "buddy_assign": {ROLE_ADMIN, ROLE_MANAGER},
+    "buddy_analytics": {ROLE_ADMIN, ROLE_ANALYST},
+    "mocks": {ROLE_USER, ROLE_MENTOR, ROLE_MANAGER, ROLE_ANALYST, ROLE_ADMIN},
+    "search": {ROLE_USER, ROLE_MENTOR, ROLE_MANAGER, ROLE_ANALYST, ROLE_ADMIN},
+    "buddy_view": {ROLE_USER, ROLE_MENTOR, ROLE_MANAGER, ROLE_ANALYST, ROLE_ADMIN},
 }
+
+
+def expand_roles(role_keys: list[str]) -> set[str]:
+    """Раскрыть bundles в гранулярные capability-роли."""
+    result = set()
+    for rk in role_keys:
+        if rk in ROLE_BUNDLES:
+            result.update(ROLE_BUNDLES[rk])
+        else:
+            result.add(rk)
+    return result
+
+
+def can_access(action: str, role_keys: list[str]) -> bool:
+    """Проверить, есть ли у пользователя доступ к действию."""
+    allowed = MODULE_ACCESS.get(action, set())
+    granular = expand_roles(role_keys)
+    return any(r in allowed for r in granular)
+
 
 def get_role_priority(role_key: str) -> int:
-    """Получить приоритет роли (0 если неизвестна)."""
     return ROLE_PRIORITIES.get(role_key, 0)
 
+
 def get_max_priority(roles: list[str]) -> int:
-    """Получить максимальный приоритет из списка ролей."""
     if not roles:
         return 0
     return max(get_role_priority(r) for r in roles)
 
+
 def get_primary_role(roles: list[str]) -> str | None:
-    """Получить роль с максимальным приоритетом."""
     if not roles:
         return None
     return max(roles, key=get_role_priority)
 
-def has_min_priority(user_roles: list[str], min_priority: int) -> bool:
-    """Проверить, есть ли у пользователя роль с минимальным приоритетом."""
-    return get_max_priority(user_roles) >= min_priority
 
 # --- Стадии материалов ---
 STAGE_FUNDAMENTAL = "fundamental"

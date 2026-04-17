@@ -1,24 +1,27 @@
-# 🤖 SABot v2.0 — Бот для комьюнити системного анализа
+# 🤖 SABot — Бот для комьюнити системного анализа
 
-Telegram-бот для управления учебным комьюнити системного анализа. Production-ready версия с усиленной безопасностью, аудитом и улучшенным UX.
+Telegram-бот для управления учебным комьюнити системного анализа. Production-ready версия на `python-telegram-bot` с capability-based ролями, аудитом и улучшенным UX.
+
+---
 
 ## ✨ Возможности
 
-### 👥 Ролевая модель (мультироли)
+### 👥 Ролевая модель (мультироли + capability-based)
 - **User** — доступ к материалам, событиям, записи на мок
 - **Mentor** — панель ментора + управление менти
-- **Admin** — полный контроль: материалы, события, роли, баны
-- **Lion** — мета-админ: управление Buddy системой + все права админа
+- **Manager** — CRUD материалов и событий, аналитика, назначение бадди
+- **Analyst** — просмотр статистики и аналитических отчётов
+- **Admin** — полный контроль: роли, баны, все CRUD операции
 
-Поддержка мультиролей: `admin,mentor`, `lion,mentor` и т.д.
+**Bundle-роли:** `manager` в UI автоматически разворачивается в набор `{mentor, manager, analyst}`. В базе хранятся только гранулярные (атомарные) роли.
 
 ### 📚 Материалы по стадиям обучения
 - 📖 **Фундаментальная теория** — базовые концепции
-- 🔧 **Практическая теория** — применение знаний  
+- 🔧 **Практическая теория** — применение знаний
 - 📝 **Практические задания** — задачи для отработки
 - 🗺️ **Прочие гайды** — дополнительные материалы
 
-CRUD для админов, публичный просмотр для всех.
+CRUD для Admin/Manager, публичный просмотр для всех.
 
 ### 📅 Управление событиями
 - CRUD для вебинаров, митапов, квизов
@@ -28,7 +31,8 @@ CRUD для админов, публичный просмотр для всех.
 
 ### 🤝 Buddy System (Наставничество)
 - **Менторы** — управление менти, статусами, прогрессом
-- **Лев** — управление всей системой: отчёты, назначение менти
+- **Менеджеры** — назначение менти менторам, отчёты по системе
+- **Аналитики** — просмотр статистики по менторам
 - **Пользователи** — просмотр контактов своего ментора
 - Гибкий парсинг дат: `15.03.26`, `15,03,2026`, `сегодня`
 
@@ -95,27 +99,26 @@ python main.py
 
 ```
 SABot/
-├── main.py                 # Точка входа, инициализация бота
-├── config.py               # Константы + MOCK_MENTORS
-├── db_utils.py             # Database + AuthMiddleware + HasRole
-├── utils.py                # Утилиты + валидация + rate limiting
+├── main.py                 # Точка входа, регистрация хендлеров, JobQueue
+├── config.py               # Константы, capability-матрица, ROLE_BUNDLES
+├── db_utils.py             # Database класс, CRUD, авторизация, миграции
+├── utils.py                # Клавиатуры, rate limit, formatters
 ├── audit_logger.py         # Audit logging для безопасности
 ├── requirements.txt        # Зависимости
 ├── .env                    # Переменные окружения
 ├── .env.example            # Шаблон переменных
-├── FINAL_SUMMARY.md        # 📄 Финальный отчёт по всем итерациям
-├── test_bot.py             # Юнит-тесты
-├── test_enhanced.py        # Расширенные тесты
+├── PROJECT_ANALYSIS.md     # 📄 Архитектурный анализ проекта
 │
 ├── handlers/               # Модули обработчиков
 │   ├── common.py           # /start, /help, навигация, fallback
 │   ├── materials.py        # CRUD материалов + confirmations
 │   ├── events.py           # CRUD событий + flexible dates
 │   ├── roles.py            # Управление ролями + confirmations
-│   ├── buddy.py            # Buddy system + Lion access
+│   ├── buddy.py            # Buddy system + analytics
 │   ├── mocks.py            # Запись на мок (динамические менторы)
 │   ├── bans.py             # Просмотр и снятие банов
-│   └── search.py           # /search + команды для групп
+│   ├── search.py           # /search + команды для групп
+│   └── conversation_utils.py  # Легковесный FSM: _state + _history
 │
 └── deploy/                 # Docker + CI/CD конфигурация
 ```
@@ -124,27 +127,40 @@ SABot/
 
 ## 🏗️ Архитектура
 
-### Middleware (AuthMiddleware)
+### Фреймворк
 
-Централизованная проверка авторизации:
-- Проверяет пользователя в БД один раз на сообщение
-- Кеширует роли в `data["user_roles"]` (список для мультиролей)
-- Блокирует неавторизованных с уведомлением
+В проекте используется **python-telegram-bot (PTB) v20+** с `Application`, `JobQueue` и пользовательским фильтром `in_state` для маршрутизации диалогов. Отказ от `ConversationHandler` в пользу собственного легковесного FSM на базе `context.user_data["_state"]` и `context.user_data["_history"]`.
 
-### Фильтры
+### Авторизация
+
+Вместо middleware-«чёрного ящика» авторизация выполняется **явно** в начале защищённых хендлеров:
 
 ```python
-HasRole(ROLE_ADMIN)              # Одна роль
-HasRole([ROLE_MENTOR, ROLE_LION]) # Любая из ролей
+from db_utils import require_any_role
+
+async def admin_handler(update, context):
+    user = await require_any_role(update, context, {"admin", "manager"})
+    ...
 ```
 
-### FSM States
+### Capability-based доступ
 
-Каждый модуль имеет изолированные состояния:
-- `MaterialStates` — для работы с материалами
-- `EventStates` — для работы с событиями  
-- `RoleStates` — для управления ролями
-- `BuddyStates` — для системы наставничества
+Права описаны в `config.py` через множества ролей (`MODULE_ACCESS`).
+
+```python
+can_access("materials_crud", role_keys)   # admin / manager
+can_access("buddy_analytics", role_keys)  # admin / analyst
+```
+
+`ROLE_BUNDLES` позволяют в UI назначать "менеджера", а в БД хранить только атомарные роли: `mentor`, `manager`, `analyst`.
+
+### FSM (легковесный)
+
+- `set_user_state(context, state)` — переключает состояние и пушит предыдущее в `_history`
+- `back_handler(update, context)` — возвращает на предыдущий шаг через `pop()` из `_history`
+- `clear_user_state(context)` — сброс диалога
+
+Кнопка **🔙 Назад** работает универсально для всех диалогов без необходимости обновлять карту переходов.
 
 ---
 
@@ -162,11 +178,11 @@ HasRole([ROLE_MENTOR, ROLE_LION]) # Любая из ролей
 | `🤝 Buddy` | Система взаимопомощи |
 | `/search <запрос>` | Поиск по материалам |
 
-### Для администраторов
+### Для администраторов / менеджеров
 
 **Управление материалами:**
 ```
-⚙️ Админка → 📦 Управление материалами
+⚙️ Управление → 📦 Управление материалами
 → 📖 Просмотреть | ➕ Добавить | ✏️ Редактировать | 🗑️ Удалить | 📊 Статистика
 ```
 
@@ -174,15 +190,15 @@ HasRole([ROLE_MENTOR, ROLE_LION]) # Любая из ролей
 
 **Управление событиями:**
 ```
-⚙️ Админка → 📋 Управление событиями
+⚙️ Управление → 📋 Управление событиями
 → 📖 Просмотреть | ➕ Добавить | ✏️ Редактировать | 🗑️ Удалить
 ```
 
 Дата: поддержка форматов `2024-12-31 18:00`, `31.12.2024 18:00`, `сегодня 18:00`.
 
-**Управление пользователями:**
+**Управление пользователями (только Admin):**
 ```
-⚙️ Админка → 👥 Управление ролями
+⚙️ Управление → 👥 Управление ролями
 → 📋 Список | ➕ Назначить роль | 🗑️ Удалить пользователя
 ```
 
@@ -203,14 +219,12 @@ HasRole([ROLE_MENTOR, ROLE_LION]) # Любая из ролей
 
 Статусы: `active`, `completed`, `paused`, `dropped`.
 
-### Для Льва (Meta-Admin)
+### Для менеджеров / аналитиков
 
 ```
-🤝 Buddy → 🦁 Панель Льва
-→ 📊 Список менторов | 📋 Все менти | ➕ Назначить бадди
+🤝 Buddy → 📊 Отчёты
+→ Общая статистика по менторам и менти
 ```
-
-Доступ ко всей системе Buddy для управления.
 
 ### Команды в группах
 
@@ -251,7 +265,7 @@ HasRole([ROLE_MENTOR, ROLE_LION]) # Любая из ролей
 
 - Per-user: 20 запросов за 10 секунд
 - Per-group: 3 одинаковые команды → мут на 60 сек
-- Memory protection: LRU cleanup при 50K записей
+- Memory protection: LRU cleanup при 50K записях
 
 ### Безопасность ошибок
 
@@ -265,9 +279,19 @@ HasRole([ROLE_MENTOR, ROLE_LION]) # Любая из ролей
 
 ### Таблицы
 
-**user_roles** — пользователи
+**roles** — справочник ролей
 ```sql
-id | user_id | username | role | created_at
+id | role_key
+```
+
+**users** — пользователи
+```sql
+id | user_id | username | created_at
+```
+
+**user_role_assignments** — many-to-many связь ролей
+```sql
+user_id | role_id
 ```
 
 **materials** — материалы
@@ -295,21 +319,29 @@ id | user_id | username | attempt_count | last_attempt
 id | mentor_id | mentee_id | mentee_full_name | mentee_telegram_tag | status | assigned_date | created_at
 ```
 
+### Автоматические миграции
+
+При старте `Database.init_db()` автоматически применяет:
+1. **v1 → v2:** переход от строки `role` в `user_roles` к нормализованной many-to-many схеме (`users` + `roles` + `user_role_assignments`)
+2. **lion → capabilities:** замена устаревшей роли `lion` на гранулярный набор `{mentor, manager, analyst}`
+
+Ручное вмешательство не требуется — существующие базы данных обновляются прозрачно.
+
 ---
 
 ## ⚙️ Технические детали
 
 ### Стек
 - **Python 3.11+**
-- **aiogram 3.x** — асинхронный фреймворк
-- **aiosqlite** — асинхронный SQLite
-- **python-dotenv** — переменные окружения
+- **python-telegram-bot[job-queue]>=20.0** — асинхронный фреймворк
+- **aiosqlite==0.22.1** — асинхронный SQLite (WAL mode)
+- **python-dotenv==1.2.1** — переменные окружения
 
-### Особенности v2.0
-- ✅ **Мультироли** — поддержка `admin,mentor,lion`
+### Особенности
+- ✅ **Capability-based роли** — никаких magic priorities
+- ✅ **Bundle-роли** — "manager" = {mentor, manager, analyst}
 - ✅ **Audit logging** — полный трек операций
 - ✅ **Input validation** — защита от injection
-- ✅ **Callback validation** — regex-валидация
 - ✅ **Flexible dates** — естественный язык
 - ✅ **Confirmation dialogs** — подтверждение опасных операций
 - ✅ **Typing indicators** — UX при загрузке
@@ -349,11 +381,9 @@ tail -f audit.log
 ## 🧪 Тестирование
 
 ```bash
-# Юнит-тесты
-python test_bot.py
-
-# Расширенные тесты (UX, security)
-python test_enhanced.py
+# Синтаксическая проверка всех модулей
+python -m py_compile main.py
+python -c "from handlers import *"
 ```
 
 ---
@@ -374,11 +404,10 @@ MIT License
 
 ## 📄 Документация
 
-- `FINAL_SUMMARY.md` — Финальный отчёт по всем итерациям развития
-- `TEST_CASES.md` — Тест-кейсы для ручного тестирования
+- `PROJECT_ANALYSIS.md` — Архитектурный анализ и обоснование решений
 - `DEPLOY.md` — Инструкции по деплою
-- `CI_CD_SETUP.md` — Настройка CI/CD
+- `AGENTS.md` — Гайд для AI-агентов, работающих с кодовой базой
 
 ---
 
-**SABot v2.0 — Production Ready** 🚀🛡️
+**SABot — Production Ready** 🚀🛡️
