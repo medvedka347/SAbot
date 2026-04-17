@@ -26,13 +26,16 @@ jobs:
             set -e
             echo "🚀 Starting deployment..."
             
-            BOT_DIR="/opt/sabot"
-            
-            # Check if directory exists (first-time setup check)
-            if [ ! -d "$BOT_DIR" ]; then
-              echo "❌ Bot directory not found. Run setup-server.sh first!"
+            # Auto-detect bot directory
+            if [ -d "/opt/sabot" ]; then
+              BOT_DIR="/opt/sabot"
+            elif [ -d "/root/SABot" ]; then
+              BOT_DIR="/root/SABot"
+            else
+              echo "❌ Bot directory not found. Checked /opt/sabot and /root/SABot"
               exit 1
             fi
+            echo "📁 Bot directory: $BOT_DIR"
             
             cd "$BOT_DIR"
             
@@ -51,6 +54,50 @@ jobs:
             echo "📦 Updating dependencies..."
             source .venv/bin/activate
             pip install --quiet -r requirements.txt
+            
+            # Detect which user should own the service process
+            SERVICE_USER=$(stat -c '%U' "$BOT_DIR" 2>/dev/null || echo "sabot")
+            echo "👤 Service user: $SERVICE_USER"
+            
+            # Regenerate systemd service with correct paths
+            echo "⚙️ Updating systemd service..."
+            tee /etc/systemd/system/sabot.service > /dev/null <<EOF
+[Unit]
+Description=SABot Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+WorkingDirectory=${BOT_DIR}
+EnvironmentFile=${BOT_DIR}/.env
+Environment=PYTHONPATH=${BOT_DIR}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=${BOT_DIR}/.venv/bin/python ${BOT_DIR}/main.py
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+KillMode=process
+TimeoutSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sabot
+
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=${BOT_DIR}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            systemctl daemon-reload
             
             # Restart service
             echo "🔄 Restarting service..."
