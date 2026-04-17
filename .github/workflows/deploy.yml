@@ -24,7 +24,7 @@ jobs:
           script_stop: true
           script: |
             set -e
-            echo "🚀 Starting deployment via SSH to ${{ secrets.SSH_HOST }}..."
+            echo "🚀 Starting deployment via SSH to ${{ secrets.SSH_HOST }} as $(whoami)..."
             
             # Auto-detect bot directory on the server
             if [ -d "/opt/sabot" ]; then
@@ -33,7 +33,6 @@ jobs:
               BOT_DIR="/root/SABot"
             else
               echo "❌ Bot directory not found. Tried /opt/sabot and /root/SABot"
-              echo "Run setup-server.sh first or clone the repo manually."
               exit 1
             fi
             echo "📁 Using bot directory: $BOT_DIR"
@@ -54,60 +53,6 @@ jobs:
               git remote set-url origin "$NEW_REMOTE"
             fi
             
-            # Backup database before update
-            if [ -f "user_roles.db" ]; then
-              cp user_roles.db "user_roles.db.backup.$(date +%Y%m%d_%H%M%S)"
-              echo "💾 Database backed up"
-            fi
-            if [ -f "data/user_roles.db" ]; then
-              cp data/user_roles.db "data/user_roles.db.backup.$(date +%Y%m%d_%H%M%S)"
-              echo "💾 Database backed up (data/)"
-            fi
-            
-            # Pull latest code
-            echo "📥 Pulling latest changes..."
-            git fetch origin
-            git reset --hard origin/main
-            
-            # Update dependencies if requirements changed
-            echo "📦 Updating dependencies..."
-            source .venv/bin/activate
-            pip install --quiet -r requirements.txt
-            
-            # Update systemd service file from repo (use sudo if not root)
-            echo "⚙️ Updating systemd service..."
-            SUDO=""
-            if [ "$(id -u)" -ne 0 ]; then
-              SUDO="sudo"
-              echo "👤 Non-root user detected, using sudo for system commands"
-            fi
-            
-            $SUDO cp "$BOT_DIR/deploy/sabot.service" /etc/systemd/system/sabot.service
-            $SUDO systemctl daemon-reload
-            
-            # Restart service
-            echo "🔄 Restarting service..."
-            $SUDO systemctl restart sabot
-            
-            # Wait for service to start
-            sleep 3
-            
-            # Check status
-            if $SUDO systemctl is-active --quiet sabot; then
-              echo "✅ Deployment successful! Bot is running."
-              $SUDO systemctl status sabot --no-pager
-            else
-              echo "❌ Deployment failed! Service is not running."
-              echo ""
-              echo "📋 Last 50 lines of logs:"
-              $SUDO journalctl -u sabot -n 50 --no-pager
-              echo ""
-              echo "💡 Common causes:"
-              echo "   - .env missing or invalid BOT_TOKEN"
-              echo "   - WorkingDirectory in service file does not match $BOT_DIR"
-              echo "   - Missing write permissions for SQLite / audit.log"
-              echo ""
-              echo "🔧 To fix manually, run on the server:"
-              echo "   bash $BOT_DIR/deploy/deploy.sh"
-              exit 1
-            fi
+            # Make deploy.sh executable and run it
+            chmod +x "$BOT_DIR/deploy/deploy.sh"
+            bash "$BOT_DIR/deploy/deploy.sh"

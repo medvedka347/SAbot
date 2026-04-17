@@ -11,14 +11,26 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SERVICE_NAME="sabot"
-SERVICE_FILE="${BOT_DIR}/deploy/sabot.service"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Detect if we need sudo
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    SUDO="sudo"
+fi
+
+# Detect owner of the bot directory (service will run as this user)
+SERVICE_USER=$(stat -c '%U' "$BOT_DIR" 2>/dev/null || echo "")
+if [ -z "$SERVICE_USER" ] || [ "$SERVICE_USER" = "UNKNOWN" ]; then
+    SERVICE_USER=$(whoami)
+fi
+
 echo -e "${GREEN}🚀 Deploying SABot from ${BOT_DIR}...${NC}"
+echo -e "${GREEN}👤 Service user: ${SERVICE_USER}${NC}"
 
 cd "$BOT_DIR"
 
@@ -48,28 +60,65 @@ else
     exit 1
 fi
 
-# Update systemd service file if it exists in repo
-if [ -f "$SERVICE_FILE" ]; then
-    echo -e "${YELLOW}⚙️ Updating systemd service...${NC}"
-    cp "$SERVICE_FILE" "/etc/systemd/system/${SERVICE_NAME}.service"
-    systemctl daemon-reload
+# Generate systemd service dynamically with correct paths
+echo -e "${YELLOW}⚙️ Generating systemd service...${NC}"
+$SUDO tee "/etc/systemd/system/${SERVICE_NAME}.service" > /dev/null <<EOF
+[Unit]
+Description=SABot Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+WorkingDirectory=${BOT_DIR}
+EnvironmentFile=${BOT_DIR}/.env
+Environment=PYTHONPATH=${BOT_DIR}
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=${BOT_DIR}/.venv/bin/python -m py_compile ${BOT_DIR}/main.py
+ExecStart=${BOT_DIR}/.venv/bin/python ${BOT_DIR}/main.py
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+KillMode=process
+TimeoutSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sabot
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=${BOT_DIR}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+$SUDO systemctl daemon-reload
+if ! $SUDO systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
+    $SUDO systemctl enable "$SERVICE_NAME"
 fi
 
 # Restart service
 echo -e "${YELLOW}🔄 Restarting ${SERVICE_NAME}...${NC}"
-systemctl restart "$SERVICE_NAME"
+$SUDO systemctl restart "$SERVICE_NAME"
 
 # Wait and check status
 sleep 3
-if systemctl is-active --quiet "$SERVICE_NAME"; then
-    echo -e "${GREEN}✅ Deployment successful!${SERVICE_NAME} is running.${NC}"
-    systemctl status "$SERVICE_NAME" --no-pager
+if $SUDO systemctl is-active --quiet "$SERVICE_NAME"; then
+    echo -e "${GREEN}✅ Deployment successful! ${SERVICE_NAME} is running.${NC}"
+    $SUDO systemctl status "$SERVICE_NAME" --no-pager
 else
     echo -e "${RED}❌ Deployment failed! Service is not running.${NC}"
     echo ""
     echo -e "${YELLOW}📋 Last 50 lines of logs:${NC}"
-    journalctl -u "$SERVICE_NAME" -n 50 --no-pager
+    $SUDO journalctl -u "$SERVICE_NAME" -n 50 --no-pager
     echo ""
-    echo -e "${YELLOW}💡 Tip: check that WorkingDirectory in the service file matches ${BOT_DIR}${NC}"
+    echo -e "${YELLOW}💡 Tip: check that .env exists and BOT_TOKEN is valid${NC}"
     exit 1
 fi
