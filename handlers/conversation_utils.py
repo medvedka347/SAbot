@@ -58,11 +58,15 @@ async def main_menu_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 class StateFilter(BaseFilter):
     """Фильтр, который пропускает только если context.user_data['_state'] == заданное состояние."""
 
-    __slots__ = ("state_name",)
-
     def __init__(self, state_name: str):
+        super().__init__()
         self.state_name = state_name
         self.name = f"StateFilter({state_name})"
+
+    def filter(self, message) -> bool:
+        # PTB BaseFilter uses .filter() for non-async filters
+        # message here is the Update object when used as MessageHandler filter
+        return False
 
     async def __call__(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         return get_user_state(context) == self.state_name
