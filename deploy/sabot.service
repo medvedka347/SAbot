@@ -10,7 +10,11 @@ WorkingDirectory=/opt/sabot
 EnvironmentFile=/opt/sabot/.env
 Environment=PYTHONPATH=/opt/sabot
 Environment=PYTHONUNBUFFERED=1
+
+# Pre-start syntax check so failures are fast and visible in journalctl
+ExecStartPre=/opt/sabot/.venv/bin/python -m py_compile /opt/sabot/main.py
 ExecStart=/opt/sabot/.venv/bin/python /opt/sabot/main.py
+
 Restart=always
 RestartSec=5
 StartLimitIntervalSec=60
@@ -21,10 +25,10 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=sabot
 
-# Security hardening
-ProtectSystem=strict
+# Security hardening (relaxed enough for SQLite WAL + audit.log in WorkingDirectory)
+ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/opt/sabot/data
+ReadWritePaths=/opt/sabot
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectKernelTunables=true

@@ -33,6 +33,14 @@ apt update && apt upgrade -y
 echo -e "${YELLOW}📦 Installing dependencies...${NC}"
 apt install -y python3 python3-venv python3-pip git
 
+# Check Python version (need 3.10+)
+PY_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
+PY_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
+if [ "$PY_MAJOR" -lt 3 ] || ([ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]); then
+    echo -e "${RED}❌ Python 3.10+ is required. Found: ${PY_MAJOR}.${PY_MINOR}${NC}"
+    exit 1
+fi
+
 # Create dedicated user
 echo -e "${YELLOW}👤 Creating user '$USER'...${NC}"
 if ! id "$USER" &>/dev/null; then
@@ -96,5 +104,6 @@ echo "1. Edit .env file:     nano $BOT_DIR/.env"
 echo "2. Start the bot:      systemctl start sabot"
 echo "3. Check status:       systemctl status sabot"
 echo "4. View logs:          journalctl -u sabot -f"
+echo "5. Manual deploy:      bash $BOT_DIR/deploy/deploy.sh"
 echo ""
 echo -e "${YELLOW}⚠️  IMPORTANT: Edit .env before starting!${NC}"

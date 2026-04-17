@@ -37,9 +37,13 @@ jobs:
             cd "$BOT_DIR"
             
             # Backup database before update
+            if [ -f "user_roles.db" ]; then
+              cp user_roles.db "user_roles.db.backup.$(date +%Y%m%d_%H%M%S)"
+              echo "💾 Database backed up"
+            fi
             if [ -f "data/user_roles.db" ]; then
               cp data/user_roles.db "data/user_roles.db.backup.$(date +%Y%m%d_%H%M%S)"
-              echo "💾 Database backed up"
+              echo "💾 Database backed up (data/)"
             fi
             
             # Pull latest code
@@ -51,6 +55,11 @@ jobs:
             echo "📦 Updating dependencies..."
             source .venv/bin/activate
             pip install --quiet -r requirements.txt
+            
+            # Update systemd service file from repo
+            echo "⚙️ Updating systemd service..."
+            cp deploy/sabot.service /etc/systemd/system/sabot.service
+            systemctl daemon-reload
             
             # Restart service
             echo "🔄 Restarting service..."
@@ -65,7 +74,13 @@ jobs:
               systemctl status sabot --no-pager
             else
               echo "❌ Deployment failed! Service is not running."
+              echo ""
               echo "📋 Last 50 lines of logs:"
               journalctl -u sabot -n 50 --no-pager
+              echo ""
+              echo "💡 Common causes:"
+              echo "   - .env missing or invalid BOT_TOKEN"
+              echo "   - WorkingDirectory in service file does not match $BOT_DIR"
+              echo "   - Missing write permissions for SQLite / audit.log"
               exit 1
             fi
