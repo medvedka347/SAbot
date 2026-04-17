@@ -63,11 +63,6 @@ class StateFilter(BaseFilter):
         self.state_name = state_name
         self.name = f"StateFilter({state_name})"
 
-    def filter(self, message) -> bool:
-        # PTB BaseFilter uses .filter() for non-async filters
-        # message here is the Update object when used as MessageHandler filter
-        return False
-
     async def __call__(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         return get_user_state(context) == self.state_name
 
