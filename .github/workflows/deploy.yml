@@ -24,35 +24,48 @@ jobs:
           script_stop: true
           script: |
             set -e
-            echo "🚀 Starting deployment via SSH to ${{ secrets.SSH_HOST }} as $(whoami)..."
+            echo "🚀 Starting deployment..."
             
-            # Auto-detect bot directory on the server
-            if [ -d "/opt/sabot" ]; then
-              BOT_DIR="/opt/sabot"
-            elif [ -d "/root/SABot" ]; then
-              BOT_DIR="/root/SABot"
-            else
-              echo "❌ Bot directory not found. Tried /opt/sabot and /root/SABot"
+            BOT_DIR="/opt/sabot"
+            
+            # Check if directory exists (first-time setup check)
+            if [ ! -d "$BOT_DIR" ]; then
+              echo "❌ Bot directory not found. Run setup-server.sh first!"
               exit 1
             fi
-            echo "📁 Using bot directory: $BOT_DIR"
             
             cd "$BOT_DIR"
             
-            # Ensure we are inside a git repo with the correct remote
-            if [ ! -d ".git" ]; then
-              echo "❌ $BOT_DIR is not a git repository."
+            # Backup database before update
+            if [ -f "data/user_roles.db" ]; then
+              cp data/user_roles.db "data/user_roles.db.backup.$(date +%Y%m%d_%H%M%S)"
+              echo "💾 Database backed up"
+            fi
+            
+            # Pull latest code
+            echo "📥 Pulling latest changes..."
+            git fetch origin
+            git reset --hard origin/main
+            
+            # Update dependencies if requirements changed
+            echo "📦 Updating dependencies..."
+            source .venv/bin/activate
+            pip install --quiet -r requirements.txt
+            
+            # Restart service
+            echo "🔄 Restarting service..."
+            systemctl restart sabot
+            
+            # Wait for service to start
+            sleep 3
+            
+            # Check status
+            if systemctl is-active --quiet sabot; then
+              echo "✅ Deployment successful! Bot is running."
+              systemctl status sabot --no-pager
+            else
+              echo "❌ Deployment failed! Service is not running."
+              echo "📋 Last 50 lines of logs:"
+              journalctl -u sabot -n 50 --no-pager
               exit 1
             fi
-            
-            # Update remote URL if it points to the old location
-            CURRENT_REMOTE=$(git remote get-url origin 2>/dev/null || echo "")
-            if echo "$CURRENT_REMOTE" | grep -q "SABot.git"; then
-              NEW_REMOTE="https://github.com/medvedka347/SAbot.git"
-              echo "🔄 Updating remote URL: $CURRENT_REMOTE -> $NEW_REMOTE"
-              git remote set-url origin "$NEW_REMOTE"
-            fi
-            
-            # Make deploy.sh executable and run it
-            chmod +x "$BOT_DIR/deploy/deploy.sh"
-            bash "$BOT_DIR/deploy/deploy.sh"
